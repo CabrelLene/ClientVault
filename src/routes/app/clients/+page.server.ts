@@ -2,28 +2,40 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 
 const STATUSES = ['Nouveau', 'Qualifié', 'Proposé', 'Gagné', 'Perdu'] as const;
+type Status = (typeof STATUSES)[number];
 
 function parseValue(v: FormDataEntryValue | null) {
-  const n = Number(String(v ?? '0').replace(',', '.'));
+  const raw = String(v ?? '0').trim();
+  // accepte "1 234", "1,234", "1234.56"
+  const cleaned = raw.replace(/\s/g, '').replace(',', '.');
+  const n = Number(cleaned);
   return Number.isFinite(n) ? n : 0;
 }
 
-export const load: PageServerLoad = async ({ locals, url }) => {
-  const session = await locals.getSession();
-  if (!session) throw redirect(303, '/auth');
+async function requireUser(locals: App.Locals) {
+  const { data, error } = await locals.supabase.auth.getUser();
+  if (error || !data.user) throw redirect(303, '/auth');
+  return data.user;
+}
 
-  const q = (url.searchParams.get('q') ?? '').trim();
+export const load: PageServerLoad = async ({ locals, url }) => {
+  const user = await requireUser(locals);
+
+  // Supporte ?q=... et aussi ?query=... (au cas où)
+  const q = (url.searchParams.get('q') ?? url.searchParams.get('query') ?? '').trim();
   const status = (url.searchParams.get('status') ?? 'all').trim();
 
   let query = locals.supabase
     .from('clients')
     .select('id,name,company,status,value,created_at')
+    .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
   if (q) {
     const like = `%${q}%`;
     query = query.or(`name.ilike.${like},company.ilike.${like}`);
   }
+
   if (status && status !== 'all') query = query.eq('status', status);
 
   const { data: clients, error } = await query;
@@ -39,8 +51,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 export const actions: Actions = {
   create: async ({ request, locals, url }) => {
-    const session = await locals.getSession();
-    if (!session) throw redirect(303, '/auth');
+    const user = await requireUser(locals);
 
     const form = await request.formData();
     const name = String(form.get('name') ?? '').trim();
@@ -49,10 +60,10 @@ export const actions: Actions = {
     const value = parseValue(form.get('value'));
 
     if (!name) return fail(400, { error: 'Le nom est obligatoire.' });
-    if (!STATUSES.includes(status as any)) return fail(400, { error: 'Statut invalide.' });
+    if (!STATUSES.includes(status as Status)) return fail(400, { error: 'Statut invalide.' });
 
     const { error } = await locals.supabase.from('clients').insert({
-      user_id: session.user.id,
+      user_id: user.id,
       name,
       company: company || null,
       status,
@@ -68,8 +79,7 @@ export const actions: Actions = {
   },
 
   update: async ({ request, locals, url }) => {
-    const session = await locals.getSession();
-    if (!session) throw redirect(303, '/auth');
+    const user = await requireUser(locals);
 
     const form = await request.formData();
     const id = String(form.get('id') ?? '').trim();
@@ -80,12 +90,13 @@ export const actions: Actions = {
 
     if (!id) return fail(400, { error: 'ID manquant.' });
     if (!name) return fail(400, { error: 'Le nom est obligatoire.' });
-    if (!STATUSES.includes(status as any)) return fail(400, { error: 'Statut invalide.' });
+    if (!STATUSES.includes(status as Status)) return fail(400, { error: 'Statut invalide.' });
 
     const { error } = await locals.supabase
       .from('clients')
       .update({ name, company: company || null, status, value })
-      .eq('id', id);
+      .eq('id', id)
+      .eq('user_id', user.id);
 
     if (error) return fail(400, { error: error.message });
 
@@ -96,14 +107,18 @@ export const actions: Actions = {
   },
 
   remove: async ({ request, locals, url }) => {
-    const session = await locals.getSession();
-    if (!session) throw redirect(303, '/auth');
+    const user = await requireUser(locals);
 
     const form = await request.formData();
     const id = String(form.get('id') ?? '').trim();
     if (!id) return fail(400, { error: 'ID manquant.' });
 
-    const { error } = await locals.supabase.from('clients').delete().eq('id', id);
+    const { error } = await locals.supabase
+      .from('clients')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id);
+
     if (error) return fail(400, { error: error.message });
 
     throw redirect(

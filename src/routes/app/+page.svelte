@@ -1,295 +1,378 @@
 <script lang="ts">
-  export let data: any;
+  import KpiCard from '$lib/components/KpiCard.svelte';
+  import StatusPill from '$lib/components/StatusPill.svelte';
 
-  const fmtMoney = (n: number) =>
-    new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD' }).format(n ?? 0);
+  type ClientRow = {
+    id: string;
+    name: string;
+    company: string | null;
+    status: string;
+    value: number;
+    created_at: string;
+  };
+
+  type TaskRow = {
+    id: string;
+    title: string;
+    done: boolean;
+    due_date: string | null;
+    client_id: string;
+    created_at: string;
+  };
+
+  type Data = {
+    today: string;
+    error: string | null;
+    kpis: null | {
+      totalClients: number;
+      totalValue: number;
+      openValue: number;
+      wonValue: number;
+      lostValue: number;
+      winRate: number;
+      openTasks: number;
+      overdueTasks: number;
+      dueTodayTasks: number;
+    };
+    statusCount: Record<string, number>;
+    recentClients: ClientRow[];
+    taskHighlights: null | {
+      overdue: TaskRow[];
+      dueToday: TaskRow[];
+      noDue: TaskRow[];
+    };
+  };
+
+  let { data } = $props<{ data: Data }>();
+
+  const money = (n: number) =>
+    new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(n || 0);
 
   const pct = (n: number) => `${Math.max(0, Math.min(100, n || 0))}%`;
 
-  const getCount = (s: string) => Number(data.statusCount?.[s] ?? 0);
+  const pipeOrder = ['Nouveau', 'Qualifié', 'Proposé', 'Gagné', 'Perdu'];
 
-  const badgeClass = (s: string) => {
-    if (s === 'Gagné') return 'b b--win';
-    if (s === 'Perdu') return 'b b--lost';
-    if (s === 'Proposé') return 'b b--prop';
-    if (s === 'Qualifié') return 'b b--qual';
-    return 'b b--new';
-  };
+  const pipe = (counts: Record<string, number>) =>
+    pipeOrder.map((s) => ({ status: s, count: counts[s] ?? 0 }));
 </script>
 
-<div class="wrap">
-  <header class="top">
-    <div>
-      <h1>Dashboard</h1>
-      <p class="sub">Aujourd’hui: <b>{data.today}</b> • Vue globale sur ton pipeline.</p>
-    </div>
+{#if data.error}
+  <div class="err">
+    <div class="err__title">Erreur</div>
+    <div class="err__text">{data.error}</div>
+  </div>
+{:else if !data.kpis}
+  <div class="loading">Chargement…</div>
+{:else}
+  <div class="grid">
+    <section class="hero">
+      <div class="hero__left">
+        <div class="badge">📌 Aujourd’hui : <b>{data.today}</b></div>
+        <h1 class="h1">Dashboard</h1>
+        <p class="p">
+          Suivi clair des prospects, valeur de pipeline, et tâches à risque.
+        </p>
 
-    <nav class="nav">
-      <a class="ghost" href="/app/clients">Clients</a>
-      <a class="ghost" href="/app/clients">+ Ajouter</a>
-
-      <form method="POST" action="/app/seed">
-  <button class="ghost" type="submit">Charger démo</button>
-</form>
-
-
-      <form method="POST" action="/app/seed">
-  <button class="ghost" type="submit">Charger démo</button>
-</form>
-
-      <form method="POST" action="/app/logout">
-        <button class="danger" type="submit">Logout</button>
-      </form>
-    </nav>
-  </header>
-
-  {#if data.error}
-    <div class="alert alert--danger">Erreur: {data.error}</div>
-  {/if}
-
-  {#if data.kpis}
-    <section class="grid">
-      <div class="card kpi">
-        <div class="kpi__label">Clients</div>
-        <div class="kpi__value">{data.kpis.totalClients}</div>
-        <div class="kpi__hint">Total enregistrés</div>
+        <div class="quick">
+          <a class="btn" href="/app/clients">Voir les clients</a>
+          <a class="btn btn--ghost" href="/app/clients?status=Proposé">Propositions</a>
+        </div>
       </div>
 
-      <div class="card kpi">
-        <div class="kpi__label">Pipeline (ouvert)</div>
-        <div class="kpi__value">{fmtMoney(data.kpis.openValue)}</div>
-        <div class="kpi__hint">Hors Gagné / Perdu</div>
-      </div>
-
-      <div class="card kpi">
-        <div class="kpi__label">Win rate</div>
-        <div class="kpi__value">{data.kpis.winRate}%</div>
-        <div class="kpi__hint">Gagné / (Gagné + Perdu)</div>
-        <div class="bar"><span style={`width:${pct(data.kpis.winRate)}`}></span></div>
-      </div>
-
-      <div class="card kpi">
-        <div class="kpi__label">Tâches</div>
-        <div class="kpi__value">{data.kpis.openTasks}</div>
-        <div class="kpi__hint">
-          <span class="pill pill--danger">{data.kpis.overdueTasks} en retard</span>
-          <span class="pill pill--warn">{data.kpis.dueTodayTasks} aujourd’hui</span>
+      <div class="hero__right">
+        <div class="pipe">
+          <div class="pipe__title">Pipeline</div>
+          <div class="pipe__list">
+            {#each pipe(data.statusCount) as s}
+              <div class="pipe__row">
+                <StatusPill status={s.status} />
+                <div class="pipe__count">{s.count}</div>
+              </div>
+            {/each}
+          </div>
         </div>
       </div>
     </section>
 
-    <section class="grid2">
-      <div class="card">
-        <div class="head">
-          <h2>Pipeline</h2>
-          <a class="ghost" href="/app/clients">Voir tout</a>
-        </div>
+    <section class="kpis">
+      <KpiCard title="Clients" value={String(data.kpis.totalClients)} hint="Total dans ton CRM" icon="👥" />
+      <KpiCard title="Valeur totale" value={money(data.kpis.totalValue)} hint="Pipeline + deals" icon="💰" />
+      <KpiCard title="En cours" value={money(data.kpis.openValue)} hint="Nouveau / Qualifié / Proposé" icon="🧠" />
+      <KpiCard title="Win rate" value={pct(data.kpis.winRate)} hint="Gagné / (Gagné + Perdu)" icon="🎯" />
+      <KpiCard title="Tâches ouvertes" value={String(data.kpis.openTasks)} hint="Tout ce qui reste à faire" icon="🧾" />
+      <KpiCard title="Risque" value={String(data.kpis.overdueTasks)} hint="En retard (action requise)" icon="⚠️" />
+    </section>
 
-        <div class="pipeline">
-          <div class="pRow">
-            <div class="pName">Nouveau</div>
-            <div class="pBar"><span style={`width:${pct(getCount('Nouveau') * 8)}`}></span></div>
-            <div class="pN">{getCount('Nouveau')}</div>
-          </div>
-
-          <div class="pRow">
-            <div class="pName">Qualifié</div>
-            <div class="pBar"><span style={`width:${pct(getCount('Qualifié') * 8)}`}></span></div>
-            <div class="pN">{getCount('Qualifié')}</div>
-          </div>
-
-          <div class="pRow">
-            <div class="pName">Proposé</div>
-            <div class="pBar"><span style={`width:${pct(getCount('Proposé') * 8)}`}></span></div>
-            <div class="pN">{getCount('Proposé')}</div>
-          </div>
-
-          <div class="pRow">
-            <div class="pName">Gagné</div>
-            <div class="pBar pBar--win"><span style={`width:${pct(getCount('Gagné') * 10)}`}></span></div>
-            <div class="pN">{getCount('Gagné')}</div>
-          </div>
-
-          <div class="pRow">
-            <div class="pName">Perdu</div>
-            <div class="pBar pBar--lost"><span style={`width:${pct(getCount('Perdu') * 10)}`}></span></div>
-            <div class="pN">{getCount('Perdu')}</div>
-          </div>
-        </div>
-
-        <div class="split">
+    <section class="two">
+      <div class="panel">
+        <div class="panel__head">
           <div>
-            <div class="mini">Valeur totale</div>
-            <div class="big">{fmtMoney(data.kpis.totalValue)}</div>
+            <div class="panel__title">Tâches critiques</div>
+            <div class="panel__sub">À traiter maintenant</div>
           </div>
-          <div>
-            <div class="mini">Gagné</div>
-            <div class="big">{fmtMoney(data.kpis.wonValue)}</div>
-          </div>
-          <div>
-            <div class="mini">Perdu</div>
-            <div class="big">{fmtMoney(data.kpis.lostValue)}</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="head">
-          <h2>Alertes & Next steps</h2>
-          <span class="hint">Focus sur ce qui brûle</span>
+          <a class="mini" href="/app/clients">Gérer</a>
         </div>
 
-        <div class="alerts">
-          <div class="aBlock">
-            <div class="aTitle">En retard</div>
-            {#if data.taskHighlights.overdue.length === 0}
-              <div class="aEmpty">Rien en retard. Bien.</div>
-            {:else}
-              {#each data.taskHighlights.overdue as t (t.id)}
-                <div class="aItem">
-                  <div class="aMain">{t.title}</div>
-                  <div class="aMeta">Échéance: {t.due_date}</div>
+        <div class="tasks">
+          <div class="tasks__col">
+            <div class="tasks__h">En retard</div>
+            {#if data.taskHighlights?.overdue?.length}
+              {#each data.taskHighlights.overdue as t}
+                <div class="task task--bad">
+                  <div class="task__t">{t.title}</div>
+                  <div class="task__m">Due: {t.due_date}</div>
                 </div>
               {/each}
+            {:else}
+              <div class="empty">Rien en retard. Bien joué.</div>
             {/if}
           </div>
 
-          <div class="aBlock">
-            <div class="aTitle">Aujourd’hui</div>
-            {#if data.taskHighlights.dueToday.length === 0}
-              <div class="aEmpty">Aucune tâche pour aujourd’hui.</div>
-            {:else}
-              {#each data.taskHighlights.dueToday as t (t.id)}
-                <div class="aItem">
-                  <div class="aMain">{t.title}</div>
-                  <div class="aMeta">Échéance: {t.due_date}</div>
+          <div class="tasks__col">
+            <div class="tasks__h">Aujourd’hui</div>
+            {#if data.taskHighlights?.dueToday?.length}
+              {#each data.taskHighlights.dueToday as t}
+                <div class="task task--warn">
+                  <div class="task__t">{t.title}</div>
+                  <div class="task__m">Due: {t.due_date}</div>
                 </div>
               {/each}
+            {:else}
+              <div class="empty">Aucune tâche prévue aujourd’hui.</div>
             {/if}
           </div>
         </div>
       </div>
 
-      <div class="card" style="grid-column: 1 / -1;">
-        <div class="head">
-          <h2>Derniers clients</h2>
-          <a class="ghost" href="/app/clients">Ouvrir la liste</a>
+      <div class="panel">
+        <div class="panel__head">
+          <div>
+            <div class="panel__title">Récents clients</div>
+            <div class="panel__sub">Les derniers ajoutés</div>
+          </div>
+          <a class="mini" href="/app/clients">Voir tout</a>
         </div>
 
-        {#if data.recentClients.length === 0}
-          <div class="empty">Ajoute ton premier prospect pour démarrer le pipeline.</div>
-        {:else}
-          <div class="recent">
-            {#each data.recentClients as c (c.id)}
-              <a class="rItem" href={`/app/clients/${c.id}`}>
-                <div class="rTop">
-                  <div class="rName">{c.name}</div>
-                  <span class={badgeClass(c.status)}>{c.status}</span>
+        <div class="recent">
+          {#if data.recentClients?.length}
+            {#each data.recentClients as c}
+              <a class="row" href={`/app/clients?query=${encodeURIComponent(c.company ?? c.name)}`}>
+                <div class="row__left">
+                  <div class="avatar">{(c.company ?? c.name).slice(0, 1).toUpperCase()}</div>
+                  <div>
+                    <div class="row__title">{c.company ?? c.name}</div>
+                    <div class="row__sub">{c.name}</div>
+                  </div>
                 </div>
-                <div class="rSub">
-                  <span>{c.company ?? '—'}</span>
-                  <span class="dot">•</span>
-                  <b>{fmtMoney(Number(c.value) || 0)}</b>
+                <div class="row__right">
+                  <StatusPill status={c.status} />
+                  <div class="val">{money(c.value)}</div>
                 </div>
               </a>
             {/each}
-          </div>
-        {/if}
+          {:else}
+            <div class="empty">Aucun client pour le moment. Charge la démo.</div>
+          {/if}
+        </div>
       </div>
     </section>
-  {/if}
-</div>
+  </div>
+{/if}
 
 <style>
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 26px 16px 60px; }
-  .top { display:flex; justify-content:space-between; align-items:flex-end; gap:14px; flex-wrap:wrap; }
-  h1 { margin:0; font-size: 36px; letter-spacing:-0.02em; }
-  .sub { margin: 8px 0 0; opacity:.75; }
-  .nav { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .grid{ display:grid; gap: 14px; }
 
-  .grid { display:grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
-  @media (max-width: 980px){ .grid { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 560px){ .grid { grid-template-columns: 1fr; } }
-
-  .grid2 { display:grid; grid-template-columns: 1.2fr 1fr; gap: 12px; margin-top: 12px; }
-  @media (max-width: 980px){ .grid2 { grid-template-columns: 1fr; } }
-
-  .card {
-    background: rgba(255,255,255,0.75);
-    border: 1px solid rgba(15,23,42,0.08);
-    border-radius: 18px;
+  .hero{
+    display:grid;
+    grid-template-columns: 1.2fr .8fr;
+    gap: 14px;
     padding: 16px;
-    box-shadow: 0 20px 60px rgba(15,23,42,0.08);
+    border-radius: 22px;
+    background: rgba(255,255,255,.70);
+    border: 1px solid rgba(15,23,42,.08);
+    box-shadow: 0 22px 80px rgba(15,23,42,.10);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
   }
 
-  .kpi__label { font-size: 12px; opacity:.7; font-weight: 800; }
-  .kpi__value { font-size: 28px; font-weight: 1000; letter-spacing:-0.02em; margin-top: 8px; }
-  .kpi__hint { margin-top: 6px; font-size: 12px; opacity:.75; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-
-  .bar { height: 10px; border-radius: 999px; background: rgba(15,23,42,0.06); overflow:hidden; margin-top: 10px; }
-  .bar span { display:block; height:100%; background: rgba(93,124,255,0.9); }
-
-  .head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom: 12px; }
-  .hint { font-size: 12px; opacity:.7; font-weight: 700; }
-
-  .pipeline { display:grid; gap: 10px; }
-  .pRow { display:grid; grid-template-columns: 90px 1fr 32px; gap:10px; align-items:center; }
-  .pName { font-weight: 900; font-size: 13px; opacity:.85; }
-  .pN { text-align:right; font-weight: 900; opacity:.85; }
-  .pBar { height: 10px; border-radius: 999px; background: rgba(15,23,42,0.06); overflow:hidden; }
-  .pBar span { display:block; height:100%; background: rgba(93,124,255,0.9); }
-  .pBar--win span { background: rgba(34,197,94,0.9); }
-  .pBar--lost span { background: rgba(239,68,68,0.85); }
-
-  .split { display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
-  .mini { font-size: 12px; opacity:.7; font-weight: 800; }
-  .big { margin-top: 6px; font-weight: 1000; }
-
-  .alerts { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  @media (max-width: 560px){ .alerts { grid-template-columns: 1fr; } }
-  .aBlock { padding: 12px; border-radius: 16px; background: rgba(15,23,42,0.04); border: 1px solid rgba(15,23,42,0.06); }
-  .aTitle { font-weight: 1000; margin-bottom: 8px; }
-  .aItem { padding: 10px; border-radius: 14px; background: rgba(255,255,255,0.7); border: 1px solid rgba(15,23,42,0.08); margin-top: 8px; }
-  .aMain { font-weight: 900; }
-  .aMeta { font-size: 12px; opacity:.7; margin-top: 4px; }
-  .aEmpty { opacity:.75; font-size: 13px; padding: 8px 2px; }
-
-  .recent { display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  @media (max-width: 980px){ .recent { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 560px){ .recent { grid-template-columns: 1fr; } }
-  .rItem { text-decoration:none; color: inherit; display:block; padding: 12px; border-radius: 16px; background: rgba(255,255,255,0.6); border: 1px solid rgba(15,23,42,0.08); }
-  .rItem:hover { background: rgba(255,255,255,0.8); }
-  .rTop { display:flex; justify-content:space-between; align-items:center; gap:10px; }
-  .rName { font-weight: 1000; letter-spacing:-0.01em; }
-  .rSub { margin-top: 6px; opacity:.8; display:flex; gap:8px; align-items:center; }
-  .dot { opacity:.5; }
-
-  .primary, .ghost, .danger {
-    border:0; cursor:pointer; border-radius: 12px; padding: 11px 14px; font-weight: 900;
-    transition: transform .15s ease, filter .2s ease, background .2s ease;
-    white-space: nowrap;
+  .badge{
+    display:inline-flex;
+    align-items:center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 999px;
+    background: rgba(93,124,255,.10);
+    border: 1px solid rgba(93,124,255,.18);
+    font-weight: 900;
+    font-size: 12px;
+    opacity:.9;
   }
-  .ghost { background: rgba(15,23,42,0.06); color:#0f172a; text-decoration:none; display:inline-flex; align-items:center; }
-  .ghost:hover { background: rgba(15,23,42,0.09); }
-  .danger { background: rgba(185, 28, 28, 0.10); color: #b91c1c; }
-  .danger:hover { background: rgba(185, 28, 28, 0.14); }
-  .primary:active, .ghost:active, .danger:active { transform: translateY(1px) scale(.99); }
 
-  .pill { font-weight: 1000; font-size: 12px; padding: 5px 10px; border-radius: 999px; border: 1px solid rgba(15,23,42,0.10); }
-  .pill--danger { background: rgba(239,68,68,0.10); color:#991b1b; }
-  .pill--warn { background: rgba(245,158,11,0.12); color:#92400e; }
+  .h1{
+    margin: 10px 0 4px;
+    font-size: 34px;
+    letter-spacing:-0.03em;
+    font-weight: 1000;
+  }
+  .p{
+    margin: 0;
+    opacity:.70;
+    line-height: 1.45;
+    max-width: 46ch;
+  }
 
-  .b { font-size: 12px; padding: 6px 10px; border-radius: 999px; font-weight: 1000; border: 1px solid rgba(15,23,42,0.10); }
-  .b--new  { background: rgba(93,124,255,0.12); color: #2942b8; }
-  .b--qual { background: rgba(16,185,129,0.10); color: #065f46; }
-  .b--prop { background: rgba(245,158,11,0.12); color: #92400e; }
-  .b--win  { background: rgba(34,197,94,0.12); color: #166534; }
-  .b--lost { background: rgba(239,68,68,0.10); color: #991b1b; }
+  .quick{ display:flex; gap: 10px; margin-top: 14px; flex-wrap:wrap; }
+  .btn{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    text-decoration:none;
+    padding: 10px 12px;
+    border-radius: 14px;
+    font-weight: 1000;
+    background: rgba(93,124,255,.14);
+    border: 1px solid rgba(93,124,255,.22);
+    color: rgba(37,99,235,.95);
+    transition: transform .15s cubic-bezier(.2,.8,.2,1), background .2s cubic-bezier(.2,.8,.2,1);
+  }
+  .btn:hover{ transform: translateY(-1px); background: rgba(93,124,255,.18); }
+  .btn:active{ transform: translateY(0) scale(.99); }
+  .btn--ghost{
+    background: rgba(15,23,42,.06);
+    border-color: rgba(15,23,42,.08);
+    color: rgba(15,23,42,.86);
+  }
+  .btn--ghost:hover{ background: rgba(15,23,42,.09); }
 
-  .alert { margin-top: 12px; padding: 12px 14px; border-radius: 14px; font-weight: 900; font-size: 13px; }
-  .alert--danger { background: rgba(185, 28, 28, 0.10); color: #b91c1c; border: 1px solid rgba(185,28,28,0.18); }
+  .pipe{
+    height: 100%;
+    border-radius: 18px;
+    border: 1px solid rgba(15,23,42,.08);
+    background: rgba(255,255,255,.66);
+    padding: 14px;
+  }
+  .pipe__title{ font-weight: 1000; letter-spacing:-0.01em; }
+  .pipe__list{ display:grid; gap: 10px; margin-top: 12px; }
+  .pipe__row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 10px;
+    border-radius: 14px;
+    background: rgba(15,23,42,.04);
+    border: 1px solid rgba(15,23,42,.06);
+  }
+  .pipe__count{ font-weight: 1000; opacity:.85; }
 
-  .empty { padding: 14px; opacity:.75; background: rgba(15,23,42,0.04); border-radius: 14px; }
+  .kpis{
+    display:grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .two{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  .panel{
+    border-radius: 22px;
+    border: 1px solid rgba(15,23,42,.08);
+    background: rgba(255,255,255,.72);
+    box-shadow: 0 18px 60px rgba(15,23,42,.08);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    padding: 14px;
+  }
+  .panel__head{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .panel__title{ font-weight: 1000; letter-spacing:-0.01em; }
+  .panel__sub{ font-size: 12px; opacity:.65; margin-top: 2px; }
+  .mini{
+    text-decoration:none;
+    font-weight: 1000;
+    font-size: 12px;
+    padding: 8px 10px;
+    border-radius: 999px;
+    background: rgba(15,23,42,.06);
+    border: 1px solid rgba(15,23,42,.08);
+  }
+  .mini:hover{ background: rgba(15,23,42,.09); }
+
+  .tasks{ display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .tasks__h{ font-weight: 1000; font-size: 12px; opacity:.7; margin: 6px 4px; }
+  .task{
+    padding: 10px 12px;
+    border-radius: 16px;
+    border: 1px solid rgba(15,23,42,.08);
+    background: rgba(15,23,42,.04);
+  }
+  .task--bad{ background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.16); }
+  .task--warn{ background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.18); }
+  .task__t{ font-weight: 1000; letter-spacing:-0.01em; }
+  .task__m{ font-size: 12px; opacity:.7; margin-top: 4px; }
+
+  .recent{ display:grid; gap: 10px; }
+  .row{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 18px;
+    text-decoration:none;
+    background: rgba(15,23,42,.04);
+    border: 1px solid rgba(15,23,42,.06);
+    transition: transform .15s cubic-bezier(.2,.8,.2,1), background .2s cubic-bezier(.2,.8,.2,1);
+  }
+  .row:hover{ transform: translateY(-1px); background: rgba(15,23,42,.06); }
+  .row:active{ transform: translateY(0) scale(.99); }
+
+  .row__left{ display:flex; align-items:center; gap: 10px; min-width: 0; }
+  .avatar{
+    width: 38px; height: 38px;
+    border-radius: 16px;
+    display:grid; place-items:center;
+    background: rgba(93,124,255,.12);
+    border: 1px solid rgba(93,124,255,.18);
+    font-weight: 1000;
+  }
+  .row__title{ font-weight: 1000; letter-spacing:-0.01em; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; max-width: 24ch; }
+  .row__sub{ font-size: 12px; opacity:.7; margin-top: 2px; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; max-width: 28ch; }
+
+  .row__right{ display:flex; align-items:center; gap: 10px; }
+  .val{ font-weight: 1000; opacity:.85; }
+
+  .empty{
+    padding: 12px;
+    border-radius: 16px;
+    border: 1px dashed rgba(15,23,42,.18);
+    background: rgba(15,23,42,.03);
+    font-size: 13px;
+    opacity:.75;
+  }
+
+  .err{
+    padding: 14px;
+    border-radius: 18px;
+    border: 1px solid rgba(239,68,68,.20);
+    background: rgba(239,68,68,.08);
+  }
+  .err__title{ font-weight: 1000; }
+  .err__text{ opacity:.85; margin-top: 6px; }
+
+  .loading{ opacity:.7; padding: 10px; }
+
+  @media (max-width: 1200px){
+    .kpis{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 980px){
+    .hero{ grid-template-columns: 1fr; }
+    .two{ grid-template-columns: 1fr; }
+    .tasks{ grid-template-columns: 1fr; }
+  }
 </style>

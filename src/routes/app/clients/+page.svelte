@@ -1,324 +1,570 @@
 <script lang="ts">
-  export let data: {
-    q: string;
+  import StatusPill from '$lib/components/StatusPill.svelte';
+  import type { PageData, ActionData } from './$types';
+
+  type ClientRow = {
+    id: string;
+    name: string;
+    company: string | null;
     status: string;
-    statuses: readonly string[];
-    clients: Array<{
-      id: string;
-      name: string;
-      company: string | null;
-      status: string;
-      value: number;
-      created_at: string;
-    }>;
-    loadError: string | null;
+    value: number;
+    created_at: string;
   };
 
-  export let form: { error?: string } | undefined;
+  let { data, form } = $props<{ data: PageData; form: ActionData }>();
 
-  let creating = false;
-  let editingId: string | null = null;
+  let createDlg: HTMLDialogElement | null = null;
+  let editDlg: HTMLDialogElement | null = null;
 
-  const fmtMoney = (n: number) =>
-    new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD' }).format(n ?? 0);
+  let edit: ClientRow | null = null;
 
-  const badgeClass = (s: string) => {
-    if (s === 'Gagné') return 'b b--win';
-    if (s === 'Perdu') return 'b b--lost';
-    if (s === 'Proposé') return 'b b--prop';
-    if (s === 'Qualifié') return 'b b--qual';
-    return 'b b--new';
+  const money = (n: number) =>
+    new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(n || 0);
+
+  const dateShort = (iso: string) => {
+    try {
+      return new Intl.DateTimeFormat('fr-CA', { year: 'numeric', month: 'short', day: '2-digit' }).format(
+        new Date(iso)
+      );
+    } catch {
+      return iso;
+    }
+  };
+
+  const openCreate = () => createDlg?.showModal();
+  const openEdit = (c: ClientRow) => {
+    edit = c;
+    editDlg?.showModal();
+  };
+
+  const kpis = () => {
+    const list = (data.clients ?? []) as ClientRow[];
+    const total = list.length;
+    const totalValue = list.reduce((s, c) => s + (c.value || 0), 0);
+    const openValue = list
+      .filter((c) => c.status !== 'Gagné' && c.status !== 'Perdu')
+      .reduce((s, c) => s + (c.value || 0), 0);
+
+    return { total, totalValue, openValue };
   };
 </script>
 
+{#if data.loadError}
+  <div class="err">
+    <div class="err__title">Erreur</div>
+    <div class="err__text">{data.loadError}</div>
+  </div>
+{/if}
+
+{#if form?.error}
+  <div class="err err--soft">
+    <div class="err__title">Action refusée</div>
+    <div class="err__text">{form.error}</div>
+  </div>
+{/if}
+
 <div class="wrap">
-  <header class="top">
+  <div class="head">
     <div>
-      <h1>Clients</h1>
-      <p class="sub">Pipeline de prospects & mandats — simple, rapide, propre.</p>
+      <h1 class="h1">Clients</h1>
+      <p class="sub">Recherche, statut, valeur — propre et rapide.</p>
     </div>
 
-    <div class="top__actions">
-  <a class="ghost" href="/app">Dashboard</a>
+    <div class="head__right">
+      <div class="kpi">
+        <div class="kpi__n">{kpis().total}</div>
+        <div class="kpi__t">clients</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi__n">{money(kpis().openValue)}</div>
+        <div class="kpi__t">en cours</div>
+      </div>
 
-  <!-- Export respecte les filtres actuels -->
-  <a class="ghost" href={`/app/clients/export?q=${encodeURIComponent(data.q)}&status=${encodeURIComponent(data.status)}`}>
-    Export CSV
-  </a>
+      <button class="btn btn--primary" type="button" on:click={openCreate}>
+        + Nouveau
+      </button>
+    </div>
+  </div>
 
-  <button class="primary" type="button" on:click={() => (creating = !creating)}>
-    {creating ? 'Fermer' : '+ Ajouter'}
-  </button>
-</div>
-
-  </header>
-
-  {#if data.loadError}
-    <div class="alert alert--danger">Erreur chargement: {data.loadError}</div>
-  {/if}
-
-  {#if form?.error}
-    <div class="alert alert--danger">{form.error}</div>
-  {/if}
-
-  <section class="card">
-    <form class="filters" method="GET">
+  <!-- Filters -->
+  <form class="filters" method="GET">
+    <div class="field">
+      <div class="label">Recherche</div>
       <input
         class="input"
-        type="search"
         name="q"
-        placeholder="Rechercher (nom ou entreprise)…"
+        placeholder="Nom ou compagnie…"
         value={data.q}
+        autocomplete="off"
       />
+    </div>
 
-      <select class="input" name="status" value={data.status}>
-        <option value="all">Tous les statuts</option>
+    <div class="field">
+      <div class="label">Statut</div>
+      <select class="input" name="status">
+        <option value="all" selected={data.status === 'all'}>Tous</option>
         {#each data.statuses as s}
-          <option value={s}>{s}</option>
+          <option value={s} selected={data.status === s}>{s}</option>
         {/each}
       </select>
+    </div>
 
-      <button class="ghost" type="submit">Filtrer</button>
-      <a class="ghost" href="/app/clients">Reset</a>
-    </form>
-  </section>
+    <div class="filters__actions">
+      <button class="btn" type="submit">Filtrer</button>
+      <a class="btn btn--ghost" href="/app/clients">Reset</a>
+    </div>
+  </form>
 
-  {#if creating}
-    <section class="card">
-      <h2 class="h2">Nouveau client</h2>
+  <!-- Desktop table -->
+  <div class="table">
+    <div class="thead">
+      <div>Client</div>
+      <div>Statut</div>
+      <div class="right">Valeur</div>
+      <div class="right">Créé</div>
+      <div class="right">Actions</div>
+    </div>
 
-      <form class="grid" method="POST" action="?/create">
-        <label class="field">
-          <span>Nom</span>
-          <input class="input" name="name" placeholder="Ex: Jean Tremblay" required />
+    <div class="tbody">
+      {#if data.clients.length === 0}
+        <div class="empty">
+          Aucun résultat. Essaie un autre filtre, ou charge la démo.
+        </div>
+      {:else}
+        {#each data.clients as c (c.id)}
+          <div class="tr">
+            <div class="cell">
+              <div class="title">{c.company ?? c.name}</div>
+              <div class="muted">{c.company ? c.name : '—'}</div>
+            </div>
+
+            <div class="cell">
+              <StatusPill status={c.status} />
+            </div>
+
+            <div class="cell right mono">{money(c.value)}</div>
+            <div class="cell right muted">{dateShort(c.created_at)}</div>
+
+            <div class="cell right actions">
+              <button class="icon" type="button" title="Modifier" on:click={() => openEdit(c)}>
+                ✏️
+              </button>
+
+              <form
+                method="POST"
+                action="?/remove"
+                on:submit={(e) => {
+                  if (!confirm(`Supprimer "${c.company ?? c.name}" ?`)) e.preventDefault();
+                }}
+              >
+                <input type="hidden" name="id" value={c.id} />
+                <button class="icon icon--danger" type="submit" title="Supprimer">🗑️</button>
+              </form>
+            </div>
+          </div>
+        {/each}
+      {/if}
+    </div>
+  </div>
+
+  <!-- Mobile cards -->
+  <div class="cards">
+    {#each data.clients as c (c.id)}
+      <div class="card">
+        <div class="card__top">
+          <div>
+            <div class="title">{c.company ?? c.name}</div>
+            <div class="muted">{c.company ? c.name : '—'}</div>
+          </div>
+          <StatusPill status={c.status} />
+        </div>
+
+        <div class="card__meta">
+          <div class="m">
+            <div class="m__k">Valeur</div>
+            <div class="m__v mono">{money(c.value)}</div>
+          </div>
+          <div class="m">
+            <div class="m__k">Créé</div>
+            <div class="m__v">{dateShort(c.created_at)}</div>
+          </div>
+        </div>
+
+        <div class="card__actions">
+          <button class="btn btn--ghost" type="button" on:click={() => openEdit(c)}>Modifier</button>
+
+          <form
+            method="POST"
+            action="?/remove"
+            on:submit={(e) => {
+              if (!confirm(`Supprimer "${c.company ?? c.name}" ?`)) e.preventDefault();
+            }}
+          >
+            <input type="hidden" name="id" value={c.id} />
+            <button class="btn btn--danger" type="submit">Supprimer</button>
+          </form>
+        </div>
+      </div>
+    {/each}
+  </div>
+</div>
+
+<!-- Create modal -->
+<dialog class="dlg" bind:this={createDlg}>
+  <form method="POST" action="?/create" class="dlg__card">
+    <div class="dlg__head">
+      <div>
+        <div class="dlg__title">Nouveau client</div>
+        <div class="dlg__sub">Ajoute un prospect et commence le suivi.</div>
+      </div>
+      <button class="x" type="button" on:click={() => createDlg?.close()}>✕</button>
+    </div>
+
+    <div class="dlg__grid">
+      <label class="f">
+        <span>Nom *</span>
+        <input class="input" name="name" required placeholder="Ex: Cabrel Ange" />
+      </label>
+
+      <label class="f">
+        <span>Compagnie</span>
+        <input class="input" name="company" placeholder="Ex: Phoenix Digital Solutions" />
+      </label>
+
+      <label class="f">
+        <span>Statut</span>
+        <select class="input" name="status">
+          {#each data.statuses as s}
+            <option value={s} selected={s === 'Nouveau'}>{s}</option>
+          {/each}
+        </select>
+      </label>
+
+      <label class="f">
+        <span>Valeur (CAD)</span>
+        <input class="input" name="value" inputmode="decimal" placeholder="Ex: 2500" />
+      </label>
+    </div>
+
+    <div class="dlg__actions">
+      <button class="btn btn--ghost" type="button" on:click={() => createDlg?.close()}>Annuler</button>
+      <button class="btn btn--primary" type="submit">Créer</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Edit modal -->
+<dialog class="dlg" bind:this={editDlg}>
+  <form method="POST" action="?/update" class="dlg__card">
+    <div class="dlg__head">
+      <div>
+        <div class="dlg__title">Modifier</div>
+        <div class="dlg__sub">Met à jour le statut, la valeur, etc.</div>
+      </div>
+      <button class="x" type="button" on:click={() => editDlg?.close()}>✕</button>
+    </div>
+
+    {#if edit}
+      <input type="hidden" name="id" value={edit.id} />
+
+      <div class="dlg__grid">
+        <label class="f">
+          <span>Nom *</span>
+          <input class="input" name="name" required value={edit.name} />
         </label>
 
-        <label class="field">
-          <span>Entreprise</span>
-          <input class="input" name="company" placeholder="Ex: Logia Inc." />
+        <label class="f">
+          <span>Compagnie</span>
+          <input class="input" name="company" value={edit.company ?? ''} />
         </label>
 
-        <label class="field">
+        <label class="f">
           <span>Statut</span>
-          <select class="input" name="status">
+          <select class="input" name="status" value={edit.status}>
             {#each data.statuses as s}
-              <option value={s} selected={s === 'Nouveau'}>{s}</option>
+              <option value={s}>{s}</option>
             {/each}
           </select>
         </label>
 
-        <label class="field">
+        <label class="f">
           <span>Valeur (CAD)</span>
-          <input class="input" name="value" inputmode="decimal" placeholder="Ex: 2500" />
+          <input class="input" name="value" inputmode="decimal" value={String(edit.value ?? 0)} />
         </label>
-
-        <div class="row">
-          <button class="primary" type="submit">Créer</button>
-          <button class="ghost" type="button" on:click={() => (creating = false)}>Annuler</button>
-        </div>
-      </form>
-    </section>
-  {/if}
-
-  <section class="card">
-    <div class="tablehead">
-      <div class="kpi">
-        <div class="kpi__n">{data.clients.length}</div>
-        <div class="kpi__t">éléments</div>
-      </div>
-
-      <div class="kpi">
-        <div class="kpi__n">
-          {fmtMoney(data.clients.reduce((acc, c) => acc + (Number(c.value) || 0), 0))}
-        </div>
-        <div class="kpi__t">valeur totale</div>
-      </div>
-    </div>
-
-    {#if data.clients.length === 0}
-      <div class="empty">
-        <div class="empty__title">Aucun résultat</div>
-        <div class="empty__text">Ajoute un prospect, ou enlève les filtres.</div>
-      </div>
-    {:else}
-      <div class="list">
-        {#each data.clients as c (c.id)}
-          <div class="item">
-            {#if editingId === c.id}
-              <!-- EDIT MODE -->
-              <form class="edit" method="POST" action="?/update">
-                <input type="hidden" name="id" value={c.id} />
-
-                <div class="edit__main">
-                  <input class="input" name="name" value={c.name} required />
-                  <input class="input" name="company" value={c.company ?? ''} placeholder="Entreprise" />
-                </div>
-
-                <div class="edit__side">
-                  <select class="input" name="status" value={c.status}>
-                    {#each data.statuses as s}
-                      <option value={s}>{s}</option>
-                    {/each}
-                  </select>
-
-                  <input class="input" name="value" inputmode="decimal" value={String(c.value ?? 0)} />
-
-                  <div class="row">
-                    <button class="primary" type="submit">Sauver</button>
-                    <button class="ghost" type="button" on:click={() => (editingId = null)}>
-                      Annuler
-                    </button>
-                  </div>
-                </div>
-              </form>
-            {:else}
-              <!-- VIEW MODE -->
-              <div class="meta">
-                <div class="meta__title">
-                  <div class="name">
-                    <a class="link" href={`/app/clients/${c.id}`}>{c.name}</a>
-                  </div>
-                  <span class={badgeClass(c.status)}>{c.status}</span>
-                </div>
-
-                <div class="meta__sub">
-                  <span class="company">{c.company ?? '—'}</span>
-                  <span class="dot">•</span>
-                  <span class="value">{fmtMoney(Number(c.value) || 0)}</span>
-                </div>
-              </div>
-
-              <div class="actions">
-                <button class="ghost" type="button" on:click={() => (editingId = c.id)}>
-                  Éditer
-                </button>
-
-                <form method="POST" action="?/remove" on:submit|preventDefault={(e) => {
-                  if (confirm('Supprimer ce client ?')) (e.currentTarget as HTMLFormElement).submit();
-                }}>
-                  <input type="hidden" name="id" value={c.id} />
-                  <button class="danger" type="submit">Supprimer</button>
-                </form>
-              </div>
-            {/if}
-          </div>
-        {/each}
       </div>
     {/if}
-  </section>
-</div>
+
+    <div class="dlg__actions">
+      <button class="btn btn--ghost" type="button" on:click={() => editDlg?.close()}>Annuler</button>
+      <button class="btn btn--primary" type="submit">Enregistrer</button>
+    </div>
+  </form>
+</dialog>
 
 <style>
-  .wrap { max-width: 1020px; margin: 0 auto; padding: 28px 16px 60px; }
+  .wrap{ display:grid; gap: 12px; }
 
-  .top { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; margin-bottom: 18px; }
-  h1 { margin:0; font-size: 34px; letter-spacing:-0.02em; }
-  .sub { margin:6px 0 0; opacity:.75; }
+  .head{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap: 12px;
+  }
+  .head__right{
+    display:flex;
+    align-items:center;
+    gap: 10px;
+    flex-wrap:wrap;
+    justify-content:flex-end;
+  }
 
-  .top__actions { display:flex; gap:10px; align-items:center; }
+  .h1{
+    margin: 0;
+    font-size: 30px;
+    letter-spacing:-0.03em;
+    font-weight: 1000;
+  }
+  .sub{ margin: 4px 0 0; opacity:.68; }
 
-  .card {
-    background: rgba(255,255,255,0.75);
-    border: 1px solid rgba(15,23,42,0.08);
-    border-radius: 18px;
-    padding: 16px;
-    box-shadow: 0 20px 60px rgba(15,23,42,0.08);
+  .kpi{
+    padding: 10px 12px;
+    border-radius: 16px;
+    background: rgba(255,255,255,.72);
+    border: 1px solid rgba(15,23,42,.08);
+    box-shadow: 0 16px 60px rgba(15,23,42,.08);
+    min-width: 120px;
+    text-align:right;
+  }
+  .kpi__n{ font-weight: 1000; letter-spacing:-0.02em; }
+  .kpi__t{ font-size: 12px; opacity:.65; margin-top: 2px; }
+
+  .filters{
+    display:grid;
+    grid-template-columns: 1.2fr .8fr auto;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 22px;
+    background: rgba(255,255,255,.72);
+    border: 1px solid rgba(15,23,42,.08);
+    box-shadow: 0 18px 60px rgba(15,23,42,.08);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
-    margin-top: 12px;
   }
+  .field{ display:grid; gap: 6px; }
+  .label{ font-size: 12px; opacity:.7; font-weight: 900; }
 
-  .filters { display:grid; grid-template-columns: 1.4fr 0.7fr auto auto; gap:10px; align-items:center; }
-  @media (max-width: 760px){
-    .top { flex-direction: column; align-items: flex-start; }
-    .filters { grid-template-columns: 1fr; }
-    .top__actions { width: 100%; }
-  }
-
-  .h2 { margin: 0 0 12px; font-size: 18px; letter-spacing:-0.01em; }
-
-  .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  @media (max-width: 760px){ .grid { grid-template-columns: 1fr; } }
-
-  .field span { font-size: 12px; opacity: .75; display:block; margin-bottom: 6px; }
-
-  .input {
+  .input{
     width: 100%;
-    border: 1px solid rgba(15,23,42,0.10);
-    background: #f3f4f6;
-    padding: 12px 12px;
-    border-radius: 12px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(15,23,42,.10);
+    background: rgba(15,23,42,.04);
+  }
+  .input:focus{
     outline: none;
-    font-size: 14px;
-  }
-  .input:focus {
-    border-color: rgba(93,124,255,0.55);
-    box-shadow: 0 0 0 4px rgba(93,124,255,0.14);
-    background: #f7f8ff;
+    box-shadow: 0 0 0 4px rgba(93,124,255,.20);
+    border-color: rgba(93,124,255,.45);
   }
 
-  .row { display:flex; gap:10px; align-items:center; }
+  .filters__actions{ display:flex; gap: 10px; align-items:end; justify-content:flex-end; }
 
-  .primary, .ghost, .danger {
-    border:0; cursor:pointer; border-radius: 12px; padding: 11px 14px; font-weight: 800;
-    transition: transform .15s ease, filter .2s ease, background .2s ease;
+  .btn{
+    border: 1px solid rgba(15,23,42,.10);
+    background: rgba(15,23,42,.06);
+    padding: 10px 12px;
+    border-radius: 14px;
+    font-weight: 1000;
+    cursor:pointer;
+    text-decoration:none;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    transition: transform .15s cubic-bezier(.2,.8,.2,1), background .2s cubic-bezier(.2,.8,.2,1);
   }
-  .primary { background:#5d7cff; color:#fff; box-shadow:0 14px 30px rgba(93,124,255,.25); }
-  .primary:hover { filter:brightness(1.02); }
-  .ghost { background: rgba(15,23,42,0.06); color: #0f172a; }
-  .ghost:hover { background: rgba(15,23,42,0.09); }
-  .danger { background: rgba(185, 28, 28, 0.10); color: #b91c1c; }
-  .danger:hover { background: rgba(185, 28, 28, 0.14); }
-  .primary:active, .ghost:active, .danger:active { transform: translateY(1px) scale(.99); }
+  .btn:hover{ background: rgba(15,23,42,.09); transform: translateY(-1px); }
+  .btn:active{ transform: translateY(0) scale(.99); }
 
-  .alert { margin-top: 12px; padding: 12px 14px; border-radius: 14px; font-weight: 700; font-size: 13px; }
-  .alert--danger { background: rgba(185, 28, 28, 0.10); color: #b91c1c; border: 1px solid rgba(185,28,28,0.18); }
-
-  .tablehead { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom: 12px; }
-  .kpi { display:flex; gap:10px; align-items:baseline; }
-  .kpi__n { font-weight: 900; font-size: 18px; }
-  .kpi__t { opacity:.7; font-size: 12px; }
-
-  .list { display:grid; gap: 10px; }
-  .item {
-    display:flex; justify-content:space-between; align-items:center; gap:12px;
-    padding: 12px; border: 1px solid rgba(15,23,42,0.08); border-radius: 16px; background: rgba(255,255,255,0.6);
+  .btn--primary{
+    background: rgba(93,124,255,.16);
+    border-color: rgba(93,124,255,.22);
+    color: rgba(37,99,235,.95);
   }
+  .btn--primary:hover{ background: rgba(93,124,255,.20); }
 
-  .meta__title { display:flex; align-items:center; gap:10px; }
-  .name { font-weight: 900; letter-spacing: -0.01em; }
+  .btn--ghost{ background: rgba(255,255,255,.55); }
+  .btn--danger{
+    background: rgba(239,68,68,.10);
+    border-color: rgba(239,68,68,.18);
+    color: rgba(185,28,28,.95);
+  }
+  .btn--danger:hover{ background: rgba(239,68,68,.14); }
 
-  .link { color: inherit; text-decoration: none; }
-  .link:hover { text-decoration: underline; }
-
-  .meta__sub { display:flex; gap:8px; align-items:center; opacity:.75; font-size: 13px; margin-top: 3px; }
-  .dot { opacity: .5; }
-
-  .actions { display:flex; gap:10px; align-items:center; }
-
-  .b {
+  .table{
+    border-radius: 22px;
+    overflow:hidden;
+    border: 1px solid rgba(15,23,42,.08);
+    background: rgba(255,255,255,.72);
+    box-shadow: 0 18px 60px rgba(15,23,42,.08);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  .thead, .tr{
+    display:grid;
+    grid-template-columns: 1.6fr .7fr .5fr .6fr .5fr;
+    gap: 10px;
+    padding: 12px 14px;
+    align-items:center;
+  }
+  .thead{
+    background: rgba(15,23,42,.04);
     font-size: 12px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    font-weight: 900;
-    border: 1px solid rgba(15,23,42,0.10);
+    font-weight: 1000;
+    opacity:.75;
   }
-  .b--new  { background: rgba(93,124,255,0.12); color: #2942b8; }
-  .b--qual { background: rgba(16,185,129,0.10); color: #065f46; }
-  .b--prop { background: rgba(245,158,11,0.12); color: #92400e; }
-  .b--win  { background: rgba(34,197,94,0.12); color: #166534; }
-  .b--lost { background: rgba(239,68,68,0.10); color: #991b1b; }
+  .tbody{ display:grid; }
+  .tr{
+    border-top: 1px solid rgba(15,23,42,.06);
+    transition: background .2s cubic-bezier(.2,.8,.2,1);
+  }
+  .tr:hover{ background: rgba(15,23,42,.03); }
 
-  .edit { width:100%; display:grid; grid-template-columns: 1.2fr 1fr; gap:12px; }
-  .edit__main { display:grid; gap:10px; }
-  .edit__side { display:grid; gap:10px; }
-  @media (max-width: 860px) {
-    .item { align-items: stretch; }
-    .actions { flex-direction: column; align-items: stretch; }
-    .edit { grid-template-columns: 1fr; }
+  .cell{ min-width: 0; }
+  .title{
+    font-weight: 1000;
+    letter-spacing:-0.01em;
+    white-space: nowrap;
+    overflow:hidden;
+    text-overflow: ellipsis;
+  }
+  .muted{
+    font-size: 12px;
+    opacity:.65;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow:hidden;
+    text-overflow: ellipsis;
+  }
+  .right{ text-align:right; }
+  .mono{ font-variant-numeric: tabular-nums; }
+
+  .actions{ display:flex; gap: 10px; justify-content:flex-end; align-items:center; }
+  .icon{
+    width: 38px; height: 38px;
+    border-radius: 14px;
+    border: 1px solid rgba(15,23,42,.10);
+    background: rgba(15,23,42,.06);
+    cursor:pointer;
+    display:grid;
+    place-items:center;
+    transition: transform .15s cubic-bezier(.2,.8,.2,1), background .2s cubic-bezier(.2,.8,.2,1);
+  }
+  .icon:hover{ background: rgba(15,23,42,.10); transform: translateY(-1px); }
+  .icon:active{ transform: translateY(0) scale(.99); }
+  .icon--danger{
+    background: rgba(239,68,68,.10);
+    border-color: rgba(239,68,68,.18);
+  }
+  .icon--danger:hover{ background: rgba(239,68,68,.14); }
+
+  .empty{
+    padding: 14px;
+    border-top: 1px solid rgba(15,23,42,.06);
+    opacity:.75;
   }
 
-  .empty { padding: 26px 10px; text-align: center; }
-  .empty__title { font-weight: 900; font-size: 16px; }
-  .empty__text { opacity: .75; margin-top: 6px; }
+  /* Mobile cards */
+  .cards{ display:none; gap: 10px; }
+  .card{
+    border-radius: 22px;
+    border: 1px solid rgba(15,23,42,.08);
+    background: rgba(255,255,255,.72);
+    box-shadow: 0 18px 60px rgba(15,23,42,.08);
+    padding: 12px;
+  }
+  .card__top{
+    display:flex; justify-content:space-between; align-items:flex-start; gap: 10px;
+  }
+  .card__meta{
+    display:grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    margin-top: 10px;
+  }
+  .m{ padding: 10px; border-radius: 16px; background: rgba(15,23,42,.04); border: 1px solid rgba(15,23,42,.06); }
+  .m__k{ font-size: 12px; opacity:.65; font-weight: 900; }
+  .m__v{ margin-top: 4px; font-weight: 1000; }
+
+  .card__actions{
+    display:flex; gap: 10px; margin-top: 10px; justify-content:flex-end;
+  }
+
+  /* Dialog */
+  .dlg::backdrop{ background: rgba(15,23,42,.35); backdrop-filter: blur(4px); }
+  .dlg{
+    border: 0;
+    padding: 0;
+    background: transparent;
+  }
+  .dlg__card{
+    width: min(640px, calc(100vw - 24px));
+    border-radius: 22px;
+    border: 1px solid rgba(15,23,42,.10);
+    background: rgba(255,255,255,.85);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 30px 100px rgba(15,23,42,.18);
+    padding: 14px;
+  }
+  .dlg__head{
+    display:flex; justify-content:space-between; align-items:flex-start; gap: 10px;
+    padding: 6px 4px 12px;
+  }
+  .dlg__title{ font-weight: 1000; letter-spacing:-0.01em; font-size: 16px; }
+  .dlg__sub{ font-size: 12px; opacity:.65; margin-top: 2px; }
+  .x{
+    width: 40px; height: 40px;
+    border-radius: 14px;
+    border: 1px solid rgba(15,23,42,.10);
+    background: rgba(15,23,42,.06);
+    cursor:pointer;
+  }
+  .x:hover{ background: rgba(15,23,42,.10); }
+
+  .dlg__grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 6px 4px 12px;
+  }
+  .f{ display:grid; gap: 6px; }
+  .f span{ font-size: 12px; opacity:.7; font-weight: 900; }
+
+  .dlg__actions{
+    display:flex; justify-content:flex-end; gap: 10px;
+    padding: 6px 4px 2px;
+  }
+
+  /* Errors */
+  .err{
+    padding: 14px;
+    border-radius: 18px;
+    border: 1px solid rgba(239,68,68,.20);
+    background: rgba(239,68,68,.08);
+  }
+  .err--soft{
+    border-color: rgba(245,158,11,.22);
+    background: rgba(245,158,11,.10);
+  }
+  .err__title{ font-weight: 1000; }
+  .err__text{ opacity:.85; margin-top: 6px; }
+
+  @media (max-width: 980px){
+    .filters{ grid-template-columns: 1fr; }
+    .filters__actions{ justify-content:stretch; }
+    .filters__actions .btn{ flex: 1; }
+
+    .table{ display:none; }
+    .cards{ display:grid; }
+    .dlg__grid{ grid-template-columns: 1fr; }
+    .head{ flex-direction: column; align-items: stretch; }
+    .head__right{ justify-content:space-between; }
+  }
 </style>
