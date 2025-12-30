@@ -1,34 +1,35 @@
 <script lang="ts">
   import { page } from '$app/stores';
-  import { goto } from '$app/navigation';
+  import { browser } from '$app/environment';
   import ToastHost from '$lib/components/ToastHost.svelte';
   import { toast } from '$lib/stores/toast';
 
   export let data: { user: { email?: string | null } };
-
-  // Toast via query param: ?toast=...
-  // Ex: /app?toast=✅%20Démo%20chargée
-  $: {
-    const msg = $page.url.searchParams.get('toast');
-    const type = $page.url.searchParams.get('type') ?? 'success';
-    if (msg) {
-      if (type === 'error') toast.error(msg);
-      else if (type === 'info') toast.info(msg);
-      else toast.success(msg);
-
-      // Clean l’URL (retire toast/type) sans recharger
-      const u = new URL($page.url);
-      u.searchParams.delete('toast');
-      u.searchParams.delete('type');
-      goto(u.pathname + (u.search ? u.search : ''), { replaceState: true, noScroll: true });
-    }
-  }
 
   const crumb = (pathname: string) => {
     if (pathname === '/app') return 'Dashboard';
     if (pathname.startsWith('/app/clients')) return 'Clients';
     return 'App';
   };
+
+  // Toast via query params: ?toast=...&type=success|info|error
+  // IMPORTANT: exécuter uniquement côté navigateur
+  $: if (browser) {
+    const msg = $page.url.searchParams.get('toast');
+    const type = $page.url.searchParams.get('type') ?? 'success';
+
+    if (msg) {
+      if (type === 'error') toast.error(msg);
+      else if (type === 'info') toast.info(msg);
+      else toast.success(msg);
+
+      // Clean URL sans goto() (client only)
+      const u = new URL(window.location.href);
+      u.searchParams.delete('toast');
+      u.searchParams.delete('type');
+      window.history.replaceState({}, '', u.pathname + u.search);
+    }
+  }
 </script>
 
 <ToastHost />
