@@ -1,38 +1,30 @@
-# sv
+# ClientVault — Mini CRM (SvelteKit + Supabase)
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+ClientVault est un mini CRM orienté **prospects & mandats** : pipeline, suivi client, notes, tâches avec échéances, dashboard KPI et export CSV.  
+Objectif : démontrer une app **full-stack** propre, sécurisée et déployable rapidement.
 
-## Creating a project
+## ✨ Fonctionnalités
+- Auth **Login/Register** (UI animée) via Supabase Auth
+- App protégée (`/app`) + session cookies (SSR)
+- Pipeline clients : Nouveau → Qualifié → Proposé → Gagné / Perdu
+- CRUD clients + recherche + filtres
+- Fiche client : **Notes** + **Tâches** (done + due_date)
+- Dashboard : KPI pipeline + alertes (retard / aujourd’hui)
+- Export CSV (filtré, Excel-friendly)
+- Seed demo (1 clic) pour remplir l’app
 
-If you're seeing this, you've probably already done this step. Congrats!
+## 🔐 Sécurité
+- **RLS (Row Level Security)** activé sur toutes les tables
+- Chaque utilisateur ne peut voir/modifier que ses données (`auth.uid() = user_id`)
+- Actions sensibles gérées côté serveur (SvelteKit actions / server routes)
 
-```sh
-# create a new project in the current directory
-npx sv create
+## 🧱 Stack
+- SvelteKit + TypeScript
+- Supabase (Auth + Postgres + RLS)
+- SSR + cookies (supabase/ssr)
+- UI: CSS custom (glassmorphism)
 
-# create a new project in my-app
-npx sv create my-app
-```
-
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
+## 🚀 Installation locale
+```bash
+npm install
 npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
