@@ -1,8 +1,16 @@
 <script lang="ts">
   import '$lib/styles/auth.css';
-  export let form: { signinError?: string; signupError?: string; signupOk?: boolean };
 
-  let isSignup = false;
+  let { form } = $props<{
+    form: { signinError?: string; signupError?: string; signupOk?: boolean };
+  }>();
+
+  let isSignup = $state(false);
+
+  const forgot = () => {
+    // TODO: on ajoutera /auth/reset (avec Supabase resetPasswordForEmail)
+    alert('Fonction "reset password" à ajouter (prochaine étape).');
+  };
 </script>
 
 <main class="page">
@@ -30,10 +38,10 @@
         <button class="btn btn--primary" type="submit">Register</button>
 
         {#if form?.signupError}
-          <p style="color:#b91c1c;margin:0;font-size:12px;">{form.signupError}</p>
+          <p class="msg msg--err">{form.signupError}</p>
         {/if}
         {#if form?.signupOk}
-          <p style="color:#065f46;margin:0;font-size:12px;">
+          <p class="msg msg--ok">
             Inscription OK. Selon config, vérifie ton email si demandé.
           </p>
         {/if}
@@ -67,22 +75,15 @@
           </div>
         </label>
 
-        <button
-  class="link"
-  type="button"
-  on:click={() => {
-    // TODO: tu peux ouvrir une modal ou rediriger vers /auth/reset plus tard
-    alert('Fonction "reset password" à ajouter (prochaine étape).');
-  }}
->
-  Forgot Password?
-</button>
-
+        <!-- ✅ a11y: pas de href="#" -->
+        <button class="link" type="button" on:click={forgot}>
+          Forgot Password?
+        </button>
 
         <button class="btn btn--primary" type="submit">Login</button>
 
         {#if form?.signinError}
-          <p style="color:#b91c1c;margin:0;font-size:12px;">{form.signinError}</p>
+          <p class="msg msg--err">{form.signinError}</p>
         {/if}
 
         <p class="muted">or login with social platforms</p>
