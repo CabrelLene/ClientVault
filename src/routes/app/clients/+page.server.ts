@@ -1,129 +1,166 @@
-import { fail, redirect } from '@sveltejs/kit';
+// src/routes/app/clients/+page.server.ts
+import { redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 
 const STATUSES = ['Nouveau', 'Qualifié', 'Proposé', 'Gagné', 'Perdu'] as const;
 type Status = (typeof STATUSES)[number];
 
-function parseValue(v: FormDataEntryValue | null) {
-  const raw = String(v ?? '0').trim();
-  // accepte "1 234", "1,234", "1234.56"
-  const cleaned = raw.replace(/\s/g, '').replace(',', '.');
-  const n = Number(cleaned);
+function asStatus(v: unknown): Status {
+  const s = String(v ?? '').trim() as Status;
+  return (STATUSES as readonly string[]).includes(s) ? s : 'Nouveau';
+}
+
+function asNumber(v: unknown): number {
+  // accepte "12 000", "12,000", "12000.50", etc.
+  const raw = String(v ?? '0')
+    .replace(/\s/g, '')
+    .replace(/,/g, '.');
+  const n = Number(raw);
   return Number.isFinite(n) ? n : 0;
 }
 
-async function requireUser(locals: App.Locals) {
-  const { data, error } = await locals.supabase.auth.getUser();
-  if (error || !data.user) throw redirect(303, '/auth');
-  return data.user;
-}
-
 export const load: PageServerLoad = async ({ locals, url }) => {
-  const user = await requireUser(locals);
+  const user = await locals.safeGetUser();
+  if (!user) {
+    return {
+      q: '',
+      status: 'all',
+      statuses: STATUSES,
+      clients: [],
+      loadError: 'Non authentifié'
+    };
+  }
 
-  // Supporte ?q=... et aussi ?query=... (au cas où)
-  const q = (url.searchParams.get('q') ?? url.searchParams.get('query') ?? '').trim();
+  const q = (url.searchParams.get('q') ?? '').trim();
   const status = (url.searchParams.get('status') ?? 'all').trim();
 
   let query = locals.supabase
     .from('clients')
     .select('id,name,company,status,value,created_at')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
+    .eq('user_id', user.id);
 
   if (q) {
     const like = `%${q}%`;
     query = query.or(`name.ilike.${like},company.ilike.${like}`);
   }
 
-  if (status && status !== 'all') query = query.eq('status', status);
+  if (status !== 'all') {
+    query = query.eq('status', status);
+  }
 
-  const { data: clients, error } = await query;
+  const { data, error } = await query.order('created_at', { ascending: false });
 
   return {
     q,
     status,
     statuses: STATUSES,
-    clients: clients ?? [],
-    loadError: error?.message ?? null
+    clients: (data ?? []) as Array<{
+      id: string;
+      name: string;
+      company: string | null;
+      status: Status;
+      value: number | null;
+      created_at: string;
+    }>,
+    loadError: error ? error.message : null
   };
 };
 
 export const actions: Actions = {
-  create: async ({ request, locals, url }) => {
-    const user = await requireUser(locals);
+  create: async ({ locals, request }) => {
+    const user = await locals.safeGetUser();
+    if (!user) throw redirect(303, '/auth');
 
-    const form = await request.formData();
-    const name = String(form.get('name') ?? '').trim();
-    const company = String(form.get('company') ?? '').trim();
-    const status = String(form.get('status') ?? 'Nouveau').trim();
-    const value = parseValue(form.get('value'));
+    const fd = await request.formData();
+    const name = String(fd.get('name') ?? '').trim();
+    const company = String(fd.get('company') ?? '').trim() || null;
+    const status = asStatus(fd.get('status'));
+    const value = asNumber(fd.get('value'));
 
-    if (!name) return fail(400, { error: 'Le nom est obligatoire.' });
-    if (!STATUSES.includes(status as Status)) return fail(400, { error: 'Statut invalide.' });
+    if (!name) {
+      throw redirect(303, `/app/clients?toast=${encodeURIComponent('Nom requis')}&type=error`);
+    }
 
     const { error } = await locals.supabase.from('clients').insert({
       user_id: user.id,
       name,
-      company: company || null,
+      company,
       status,
       value
     });
 
-    if (error) return fail(400, { error: error.message });
+    if (error) {
+      throw redirect(303, `/app/clients?toast=${encodeURIComponent(error.message)}&type=error`);
+    }
 
-    throw redirect(
-      303,
-      `/app/clients${url.search}${url.search ? '&' : '?'}toast=${encodeURIComponent('✅ Client créé')}&type=success`
-    );
+    throw redirect(303, `/app/clients?toast=${encodeURIComponent('Client créé ✅')}&type=success`);
   },
 
-  update: async ({ request, locals, url }) => {
-    const user = await requireUser(locals);
+  update: async ({ locals, request }) => {
+    const user = await locals.safeGetUser();
+    if (!user) throw redirect(303, '/auth');
 
-    const form = await request.formData();
-    const id = String(form.get('id') ?? '').trim();
-    const name = String(form.get('name') ?? '').trim();
-    const company = String(form.get('company') ?? '').trim();
-    const status = String(form.get('status') ?? '').trim();
-    const value = parseValue(form.get('value'));
+    const fd = await request.formData();
+    const id = String(fd.get('id') ?? '').trim();
+    const name = String(fd.get('name') ?? '').trim();
+    const company = String(fd.get('company') ?? '').trim() || null;
+    const status = asStatus(fd.get('status'));
+    const value = asNumber(fd.get('value'));
 
-    if (!id) return fail(400, { error: 'ID manquant.' });
-    if (!name) return fail(400, { error: 'Le nom est obligatoire.' });
-    if (!STATUSES.includes(status as Status)) return fail(400, { error: 'Statut invalide.' });
+    if (!id || !name) {
+      throw redirect(303, `/app/clients?toast=${encodeURIComponent('ID + nom requis')}&type=error`);
+    }
 
     const { error } = await locals.supabase
       .from('clients')
-      .update({ name, company: company || null, status, value })
+      .update({ name, company, status, value })
       .eq('id', id)
       .eq('user_id', user.id);
 
-    if (error) return fail(400, { error: error.message });
+    if (error) {
+      throw redirect(303, `/app/clients?toast=${encodeURIComponent(error.message)}&type=error`);
+    }
 
-    throw redirect(
-      303,
-      `/app/clients${url.search}${url.search ? '&' : '?'}toast=${encodeURIComponent('✅ Client mis à jour')}&type=success`
-    );
+    throw redirect(303, `/app/clients?toast=${encodeURIComponent('Client mis à jour ✅')}&type=success`);
   },
 
-  remove: async ({ request, locals, url }) => {
-    const user = await requireUser(locals);
+  remove: async ({ locals, request }) => {
+    const user = await locals.safeGetUser();
+    if (!user) throw redirect(303, '/auth');
 
-    const form = await request.formData();
-    const id = String(form.get('id') ?? '').trim();
-    if (!id) return fail(400, { error: 'ID manquant.' });
+    const fd = await request.formData();
+    const id = String(fd.get('id') ?? '').trim();
+    if (!id) throw redirect(303, `/app/clients?toast=${encodeURIComponent('ID requis')}&type=error`);
+
+    const { error } = await locals.supabase.from('clients').delete().eq('id', id).eq('user_id', user.id);
+
+    if (error) {
+      throw redirect(303, `/app/clients?toast=${encodeURIComponent(error.message)}&type=error`);
+    }
+
+    throw redirect(303, `/app/clients?toast=${encodeURIComponent('Client supprimé ✅')}&type=success`);
+  },
+
+  quickStatus: async ({ locals, request }) => {
+    const user = await locals.safeGetUser();
+    if (!user) throw redirect(303, '/auth');
+
+    const fd = await request.formData();
+    const id = String(fd.get('id') ?? '').trim();
+    const status = asStatus(fd.get('status'));
+
+    if (!id) throw redirect(303, `/app/clients?toast=${encodeURIComponent('ID requis')}&type=error`);
 
     const { error } = await locals.supabase
       .from('clients')
-      .delete()
+      .update({ status })
       .eq('id', id)
       .eq('user_id', user.id);
 
-    if (error) return fail(400, { error: error.message });
+    if (error) {
+      throw redirect(303, `/app/clients?toast=${encodeURIComponent(error.message)}&type=error`);
+    }
 
-    throw redirect(
-      303,
-      `/app/clients${url.search}${url.search ? '&' : '?'}toast=${encodeURIComponent('🗑️ Client supprimé')}&type=info`
-    );
+    throw redirect(303, `/app/clients?toast=${encodeURIComponent('Statut mis à jour ✅')}&type=success`);
   }
 };

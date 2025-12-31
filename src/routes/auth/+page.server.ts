@@ -2,8 +2,11 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
-  const session = await locals.getSession();
-  if (session) throw redirect(303, '/app');
+  const { data, error } = await locals.supabase.auth.getUser();
+
+  // Si l'utilisateur est authentifié → go dashboard
+  if (!error && data.user) throw redirect(303, '/app');
+
   return {};
 };
 

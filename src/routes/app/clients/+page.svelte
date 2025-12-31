@@ -1,570 +1,920 @@
 <script lang="ts">
-  import StatusPill from '$lib/components/StatusPill.svelte';
-  import type { PageData, ActionData } from './$types';
+  import { browser } from '$app/environment';
+  import { navigating } from '$app/stores';
 
-  type ClientRow = {
+  type Status = 'Nouveau' | 'Qualifié' | 'Proposé' | 'Gagné' | 'Perdu';
+
+  type Client = {
     id: string;
     name: string;
     company: string | null;
-    status: string;
-    value: number;
+    status: Status;
+    value: number | null;
     created_at: string;
   };
 
-  let { data, form } = $props<{ data: PageData; form: ActionData }>();
+  type Data = {
+    q: string;
+    status: string; // 'all' ou Status
+    statuses: readonly Status[];
+    clients: Client[];
+    loadError: string | null;
+  };
 
-  let createDlg: HTMLDialogElement | null = null;
-  let editDlg: HTMLDialogElement | null = null;
+  let { data } = $props<{ data: Data }>();
 
-  let edit: ClientRow | null = null;
+  // ✅ FIX: navigating est un STORE -> on utilise $navigating
+  const isLoading = $derived($navigating !== null);
+
+  let qVal = $state('');
+  let statusVal = $state<'all' | Status>('all');
+  let filterForm: HTMLFormElement | null = $state(null);
+
+  $effect(() => {
+    qVal = (data?.q ?? '').trim();
+    const s = (data?.status ?? 'all').trim() as any;
+    statusVal = (s === 'all' ? 'all' : (s as Status)) as any;
+  });
+
+  const clients = $derived((data?.clients ?? []) as Client[]);
+
+  const totalValue = $derived.by(() => clients.reduce((sum, c) => sum + (Number(c.value) || 0), 0));
+
+  const pipelineOpen = $derived.by(() =>
+    clients.reduce((sum, c) => {
+      const v = Number(c.value) || 0;
+      if (c.status === 'Gagné' || c.status === 'Perdu') return sum;
+      return sum + v;
+    }, 0)
+  );
+
+  const wonValue = $derived.by(() =>
+    clients.reduce((sum, c) => (c.status === 'Gagné' ? sum + (Number(c.value) || 0) : sum), 0)
+  );
+
+  const lostValue = $derived.by(() =>
+    clients.reduce((sum, c) => (c.status === 'Perdu' ? sum + (Number(c.value) || 0) : sum), 0)
+  );
+
+  const countByStatus = $derived.by(() =>
+    clients.reduce((m, c) => {
+      m[c.status] = (m[c.status] ?? 0) + 1;
+      return m;
+    }, {} as Record<Status, number>)
+  );
 
   const money = (n: number) =>
-    new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(n || 0);
+    new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD' }).format(Number(n) || 0);
 
-  const dateShort = (iso: string) => {
+  const statusMeta = (s: Status) => {
+    switch (s) {
+      case 'Gagné':
+        return { bg: 'rgba(16,185,129,.12)', bd: 'rgba(16,185,129,.18)', tx: 'rgb(4,120,87)' };
+      case 'Perdu':
+        return { bg: 'rgba(239,68,68,.12)', bd: 'rgba(239,68,68,.18)', tx: 'rgb(185,28,28)' };
+      case 'Qualifié':
+        return { bg: 'rgba(59,130,246,.12)', bd: 'rgba(59,130,246,.18)', tx: 'rgb(29,78,216)' };
+      case 'Proposé':
+        return { bg: 'rgba(245,158,11,.14)', bd: 'rgba(245,158,11,.22)', tx: 'rgb(146,64,14)' };
+      default:
+        return { bg: 'rgba(99,102,241,.12)', bd: 'rgba(99,102,241,.18)', tx: 'rgb(55,48,163)' };
+    }
+  };
+
+  const fmtDate = (iso: string) => {
     try {
-      return new Intl.DateTimeFormat('fr-CA', { year: 'numeric', month: 'short', day: '2-digit' }).format(
-        new Date(iso)
-      );
+      return new Date(iso).toLocaleDateString('fr-CA', { year: 'numeric', month: 'short', day: '2-digit' });
     } catch {
       return iso;
     }
   };
 
-  const openCreate = () => createDlg?.showModal();
-  const openEdit = (c: ClientRow) => {
-    edit = c;
-    editDlg?.showModal();
+  // TRI UI
+  type SortBy = 'date' | 'value' | 'status';
+  type SortDir = 'asc' | 'desc';
+
+  let sortBy = $state<SortBy>('date');
+  let sortDir = $state<SortDir>('desc');
+
+  const statusRank: Record<Status, number> = {
+    Nouveau: 0,
+    Qualifié: 1,
+    Proposé: 2,
+    Gagné: 3,
+    Perdu: 4
   };
 
-  const kpis = () => {
-    const list = (data.clients ?? []) as ClientRow[];
-    const total = list.length;
-    const totalValue = list.reduce((s, c) => s + (c.value || 0), 0);
-    const openValue = list
-      .filter((c) => c.status !== 'Gagné' && c.status !== 'Perdu')
-      .reduce((s, c) => s + (c.value || 0), 0);
+  const viewClients = $derived.by(() => {
+    const arr = [...clients];
 
-    return { total, totalValue, openValue };
-  };
+    arr.sort((a, b) => {
+      let cmp = 0;
+
+      if (sortBy === 'value') {
+        cmp = (Number(a.value) || 0) - (Number(b.value) || 0);
+      } else if (sortBy === 'status') {
+        cmp = (statusRank[a.status] ?? 0) - (statusRank[b.status] ?? 0);
+      } else {
+        const ta = Date.parse(a.created_at) || 0;
+        const tb = Date.parse(b.created_at) || 0;
+        cmp = ta - tb;
+      }
+
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+
+    return arr;
+  });
+
+  function toggleDir() {
+    sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  }
+
+  function submitFilters() {
+    filterForm?.requestSubmit();
+  }
+
+  // Modal state
+  type ModalMode = 'create' | 'edit';
+  let modalOpen = $state(false);
+  let mode = $state<ModalMode>('create');
+
+  let idVal = $state('');
+  let nameVal = $state('');
+  let companyVal = $state('');
+  let statusEditVal = $state<Status>('Nouveau');
+  let valueVal = $state('0');
+
+  const modalTitle = $derived(mode === 'edit' ? 'Modifier le client' : 'Ajouter un client');
+  const modalAction = $derived(mode === 'edit' ? '?/update' : '?/create');
+  const modalCta = $derived(mode === 'edit' ? 'Enregistrer' : 'Créer');
+
+  function openCreate() {
+    mode = 'create';
+    idVal = '';
+    nameVal = '';
+    companyVal = '';
+    statusEditVal = 'Nouveau';
+    valueVal = '0';
+    modalOpen = true;
+  }
+
+  function openEdit(c: Client) {
+    mode = 'edit';
+    idVal = c.id;
+    nameVal = c.name ?? '';
+    companyVal = c.company ?? '';
+    statusEditVal = c.status;
+    valueVal = String(Number(c.value) || 0);
+    modalOpen = true;
+  }
+
+  function closeModal() {
+    modalOpen = false;
+  }
+
+  $effect(() => {
+    if (!browser) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && modalOpen) closeModal();
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        document.querySelector<HTMLInputElement>('input[name="q"]')?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
+
+  function submitQuickStatus(e: Event) {
+    const sel = e.currentTarget as HTMLSelectElement;
+    sel.form?.requestSubmit();
+  }
 </script>
 
-{#if data.loadError}
-  <div class="err">
-    <div class="err__title">Erreur</div>
-    <div class="err__text">{data.loadError}</div>
-  </div>
-{/if}
-
-{#if form?.error}
-  <div class="err err--soft">
-    <div class="err__title">Action refusée</div>
-    <div class="err__text">{form.error}</div>
-  </div>
-{/if}
-
-<div class="wrap">
-  <div class="head">
-    <div>
-      <h1 class="h1">Clients</h1>
-      <p class="sub">Recherche, statut, valeur — propre et rapide.</p>
+<section class="page">
+  <header class="head">
+    <div class="hleft">
+      <h1>Clients</h1>
+      <p>Recherche, filtre, modifie — et garde ton pipeline sous contrôle.</p>
     </div>
 
-    <div class="head__right">
-      <div class="kpi">
-        <div class="kpi__n">{kpis().total}</div>
-        <div class="kpi__t">clients</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi__n">{money(kpis().openValue)}</div>
-        <div class="kpi__t">en cours</div>
-      </div>
+    <div class="hright">
+      <span class="chip chip--primary">
+        <span class="k">Total pipeline</span>
+        <span class="v">{money(pipelineOpen)}</span>
+      </span>
 
-      <button class="btn btn--primary" type="button" on:click={openCreate}>
-        + Nouveau
-      </button>
-    </div>
-  </div>
+      <span class="chip chip--ghost">
+        <span class="k">Clients</span>
+        <span class="v">{clients.length}</span>
+      </span>
 
-  <!-- Filters -->
-  <form class="filters" method="GET">
-    <div class="field">
-      <div class="label">Recherche</div>
-      <input
-        class="input"
-        name="q"
-        placeholder="Nom ou compagnie…"
-        value={data.q}
-        autocomplete="off"
-      />
-    </div>
-
-    <div class="field">
-      <div class="label">Statut</div>
-      <select class="input" name="status">
-        <option value="all" selected={data.status === 'all'}>Tous</option>
-        {#each data.statuses as s}
-          <option value={s} selected={data.status === s}>{s}</option>
-        {/each}
-      </select>
-    </div>
-
-    <div class="filters__actions">
-      <button class="btn" type="submit">Filtrer</button>
-      <a class="btn btn--ghost" href="/app/clients">Reset</a>
-    </div>
-  </form>
-
-  <!-- Desktop table -->
-  <div class="table">
-    <div class="thead">
-      <div>Client</div>
-      <div>Statut</div>
-      <div class="right">Valeur</div>
-      <div class="right">Créé</div>
-      <div class="right">Actions</div>
-    </div>
-
-    <div class="tbody">
-      {#if data.clients.length === 0}
-        <div class="empty">
-          Aucun résultat. Essaie un autre filtre, ou charge la démo.
-        </div>
-      {:else}
-        {#each data.clients as c (c.id)}
-          <div class="tr">
-            <div class="cell">
-              <div class="title">{c.company ?? c.name}</div>
-              <div class="muted">{c.company ? c.name : '—'}</div>
-            </div>
-
-            <div class="cell">
-              <StatusPill status={c.status} />
-            </div>
-
-            <div class="cell right mono">{money(c.value)}</div>
-            <div class="cell right muted">{dateShort(c.created_at)}</div>
-
-            <div class="cell right actions">
-              <button class="icon" type="button" title="Modifier" on:click={() => openEdit(c)}>
-                ✏️
-              </button>
-
-              <form
-                method="POST"
-                action="?/remove"
-                on:submit={(e) => {
-                  if (!confirm(`Supprimer "${c.company ?? c.name}" ?`)) e.preventDefault();
-                }}
-              >
-                <input type="hidden" name="id" value={c.id} />
-                <button class="icon icon--danger" type="submit" title="Supprimer">🗑️</button>
-              </form>
-            </div>
-          </div>
-        {/each}
+      {#if isLoading}
+        <span class="chip chip--loading"><span class="dot"></span> Mise à jour…</span>
       {/if}
     </div>
-  </div>
+  </header>
 
-  <!-- Mobile cards -->
-  <div class="cards">
-    {#each data.clients as c (c.id)}
-      <div class="card">
-        <div class="card__top">
-          <div>
-            <div class="title">{c.company ?? c.name}</div>
-            <div class="muted">{c.company ? c.name : '—'}</div>
-          </div>
-          <StatusPill status={c.status} />
+  {#if data.loadError}
+    <div class="alert" role="status">⚠️ {data.loadError}</div>
+  {/if}
+
+  <div class="toolbar" aria-label="Barre outils clients">
+    <div class="toolbar__inner">
+      <form class="filters" method="GET" bind:this={filterForm}>
+        <div class="search">
+          <span class="sicon" aria-hidden="true">⌘K</span>
+          <input name="q" type="search" placeholder="Rechercher (nom, entreprise)…" bind:value={qVal} autocomplete="off" />
         </div>
 
-        <div class="card__meta">
-          <div class="m">
-            <div class="m__k">Valeur</div>
-            <div class="m__v mono">{money(c.value)}</div>
-          </div>
-          <div class="m">
-            <div class="m__k">Créé</div>
-            <div class="m__v">{dateShort(c.created_at)}</div>
-          </div>
-        </div>
-
-        <div class="card__actions">
-          <button class="btn btn--ghost" type="button" on:click={() => openEdit(c)}>Modifier</button>
-
-          <form
-            method="POST"
-            action="?/remove"
-            on:submit={(e) => {
-              if (!confirm(`Supprimer "${c.company ?? c.name}" ?`)) e.preventDefault();
-            }}
-          >
-            <input type="hidden" name="id" value={c.id} />
-            <button class="btn btn--danger" type="submit">Supprimer</button>
-          </form>
-        </div>
-      </div>
-    {/each}
-  </div>
-</div>
-
-<!-- Create modal -->
-<dialog class="dlg" bind:this={createDlg}>
-  <form method="POST" action="?/create" class="dlg__card">
-    <div class="dlg__head">
-      <div>
-        <div class="dlg__title">Nouveau client</div>
-        <div class="dlg__sub">Ajoute un prospect et commence le suivi.</div>
-      </div>
-      <button class="x" type="button" on:click={() => createDlg?.close()}>✕</button>
-    </div>
-
-    <div class="dlg__grid">
-      <label class="f">
-        <span>Nom *</span>
-        <input class="input" name="name" required placeholder="Ex: Cabrel Ange" />
-      </label>
-
-      <label class="f">
-        <span>Compagnie</span>
-        <input class="input" name="company" placeholder="Ex: Phoenix Digital Solutions" />
-      </label>
-
-      <label class="f">
-        <span>Statut</span>
-        <select class="input" name="status">
-          {#each data.statuses as s}
-            <option value={s} selected={s === 'Nouveau'}>{s}</option>
-          {/each}
-        </select>
-      </label>
-
-      <label class="f">
-        <span>Valeur (CAD)</span>
-        <input class="input" name="value" inputmode="decimal" placeholder="Ex: 2500" />
-      </label>
-    </div>
-
-    <div class="dlg__actions">
-      <button class="btn btn--ghost" type="button" on:click={() => createDlg?.close()}>Annuler</button>
-      <button class="btn btn--primary" type="submit">Créer</button>
-    </div>
-  </form>
-</dialog>
-
-<!-- Edit modal -->
-<dialog class="dlg" bind:this={editDlg}>
-  <form method="POST" action="?/update" class="dlg__card">
-    <div class="dlg__head">
-      <div>
-        <div class="dlg__title">Modifier</div>
-        <div class="dlg__sub">Met à jour le statut, la valeur, etc.</div>
-      </div>
-      <button class="x" type="button" on:click={() => editDlg?.close()}>✕</button>
-    </div>
-
-    {#if edit}
-      <input type="hidden" name="id" value={edit.id} />
-
-      <div class="dlg__grid">
-        <label class="f">
-          <span>Nom *</span>
-          <input class="input" name="name" required value={edit.name} />
-        </label>
-
-        <label class="f">
-          <span>Compagnie</span>
-          <input class="input" name="company" value={edit.company ?? ''} />
-        </label>
-
-        <label class="f">
-          <span>Statut</span>
-          <select class="input" name="status" value={edit.status}>
-            {#each data.statuses as s}
+        <div class="selectWrap">
+          <select name="status" bind:value={statusVal} onchange={submitFilters} aria-label="Filtrer par statut">
+            <option value="all">Tous statuts</option>
+            {#each data.statuses as s (s)}
               <option value={s}>{s}</option>
             {/each}
           </select>
-        </label>
+        </div>
 
-        <label class="f">
-          <span>Valeur (CAD)</span>
-          <input class="input" name="value" inputmode="decimal" value={String(edit.value ?? 0)} />
-        </label>
+        <button class="btn btn--ghost" type="submit">Filtrer</button>
+      </form>
+
+      <div class="sortRow" aria-label="Tri">
+        <div class="sortWrap">
+          <span class="sortLabel">Tri</span>
+          <select bind:value={sortBy} aria-label="Trier par">
+            <option value="date">Date</option>
+            <option value="value">Valeur</option>
+            <option value="status">Statut</option>
+          </select>
+
+          <button class="btn btn--ghost btn--tiny" type="button" onclick={toggleDir} aria-label="Inverser l'ordre">
+            {sortDir === 'asc' ? '↑' : '↓'}
+          </button>
+        </div>
+
+        <div class="kpiRow" aria-label="Indicateurs rapides">
+          <span class="tchip">
+            <span class="tk">Ouvert</span>
+            <span class="tv">{money(pipelineOpen)}</span>
+          </span>
+          <span class="tchip tchip--good">
+            <span class="tk">Gagné</span>
+            <span class="tv">{money(wonValue)}</span>
+          </span>
+          <span class="tchip tchip--bad">
+            <span class="tk">Perdu</span>
+            <span class="tv">{money(lostValue)}</span>
+          </span>
+          <span class="tchip tchip--ghost">
+            <span class="tk">Total</span>
+            <span class="tv">{money(totalValue)}</span>
+          </span>
+        </div>
       </div>
-    {/if}
 
-    <div class="dlg__actions">
-      <button class="btn btn--ghost" type="button" on:click={() => editDlg?.close()}>Annuler</button>
-      <button class="btn btn--primary" type="submit">Enregistrer</button>
+      <div class="actions">
+        <button class="btn btn--primary" type="button" onclick={openCreate}>+ Ajouter</button>
+        <a class="btn btn--ghost" href="/app/clients/export">Export CSV</a>
+      </div>
     </div>
-  </form>
-</dialog>
+  </div>
+
+  {#if isLoading}
+    <div class="grid">
+      {#each Array(8) as _, i (i)}
+        <article class="card card--skel" aria-hidden="true">
+          <div class="sk sk1"></div>
+          <div class="sk sk2"></div>
+          <div class="sk sk3"></div>
+          <div class="sk sk4"></div>
+        </article>
+      {/each}
+    </div>
+  {:else if clients.length === 0}
+    <div class="empty">
+      <div class="empty__icon">🗂️</div>
+      <h2>Aucun client</h2>
+      <p>Commence par créer un client. Ajoute une valeur pour alimenter ton pipeline.</p>
+      <button class="btn btn--primary" type="button" onclick={openCreate}>Créer un client</button>
+    </div>
+  {:else}
+    <div class="grid">
+      {#each viewClients as c (c.id)}
+        <article class="card">
+          <div class="card__top">
+            <div class="who">
+              <div class="avatar">{c.name?.slice(0, 1)?.toUpperCase() ?? 'C'}</div>
+              <div class="meta">
+                <div class="name" title={c.name}>{c.name}</div>
+                <div class="sub">
+                  {c.company ?? '—'} • <span class="date">{fmtDate(c.created_at)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="statusBox">
+              <span
+                class="pill"
+                style={`background:${statusMeta(c.status).bg};border-color:${statusMeta(c.status).bd};color:${statusMeta(c.status).tx}`}
+                title="Statut actuel"
+              >
+                {c.status} <span class="mini">({countByStatus[c.status] ?? 0})</span>
+              </span>
+
+              <form method="POST" action="?/quickStatus" class="quick">
+                <input type="hidden" name="id" value={c.id} />
+                <select class="quickSelect" name="status" value={c.status} onchange={submitQuickStatus} aria-label="Modifier le statut">
+                  {#each data.statuses as s (s)}
+                    <option value={s}>{s}</option>
+                  {/each}
+                </select>
+              </form>
+            </div>
+          </div>
+
+          <div class="value">
+            <div class="vk">Valeur</div>
+            <div class="vv">{money(Number(c.value) || 0)}</div>
+          </div>
+
+          <div class="card__actions">
+            <button class="btn btn--ghost" type="button" onclick={() => openEdit(c)}>Modifier</button>
+
+            <form method="POST" action="?/remove" class="inline">
+              <input type="hidden" name="id" value={c.id} />
+              <button class="btn btn--danger" type="submit">Supprimer</button>
+            </form>
+          </div>
+        </article>
+      {/each}
+    </div>
+  {/if}
+
+  <div class="modal" data-open={modalOpen ? '1' : '0'} aria-hidden={modalOpen ? 'false' : 'true'}>
+    <div class="backdrop" onclick={closeModal} aria-hidden="true"></div>
+
+    <div class="dialog" role="dialog" aria-modal="true" aria-label={modalTitle}>
+      <div class="dialog__head">
+        <div class="dtxt">
+          <div class="eyebrow">ClientVault</div>
+          <h3>{modalTitle}</h3>
+        </div>
+        <button class="x" type="button" onclick={closeModal} aria-label="Fermer">✕</button>
+      </div>
+
+      <form class="form" method="POST" action={modalAction}>
+        {#if mode === 'edit'}
+          <input type="hidden" name="id" value={idVal} />
+        {/if}
+
+        <label class="field">
+          <span class="lab">Nom *</span>
+          <input name="name" required placeholder="Ex: Marc Tremblay" bind:value={nameVal} />
+        </label>
+
+        <label class="field">
+          <span class="lab">Entreprise</span>
+          <input name="company" placeholder="Ex: Logia Inc." bind:value={companyVal} />
+        </label>
+
+        <div class="row2">
+          <label class="field">
+            <span class="lab">Statut</span>
+            <select name="status" bind:value={statusEditVal}>
+              {#each data.statuses as s (s)}
+                <option value={s}>{s}</option>
+              {/each}
+            </select>
+          </label>
+
+          <label class="field">
+            <span class="lab">Valeur (CAD)</span>
+            <input name="value" inputmode="decimal" placeholder="0" bind:value={valueVal} />
+          </label>
+        </div>
+
+        <div class="form__actions">
+          <button class="btn btn--ghost" type="button" onclick={closeModal}>Annuler</button>
+          <button class="btn btn--primary" type="submit">{modalCta}</button>
+        </div>
+
+        <div class="hint">Tips: <b>ESC</b> ferme la modal • <b>Ctrl/Cmd+K</b> focus la recherche.</div>
+      </form>
+    </div>
+  </div>
+</section>
+
 
 <style>
-  .wrap{ display:grid; gap: 12px; }
+  /* ✅ ton CSS inchangé + mini ajouts pour tri + quick edit */
+  :global(:root){
+    --primary: rgb(93,124,255);
+    --ok: rgb(16,185,129);
+    --bad: rgb(239,68,68);
+    --warn: rgb(245,158,11);
+    --info: rgb(59,130,246);
+
+    --line: rgba(15,23,42,.08);
+    --glass: rgba(255,255,255,.72);
+    --shadow: 0 18px 55px rgba(15,23,42,.06);
+  }
+
+  .page{ display:grid; gap: 14px; }
 
   .head{
     display:flex;
     justify-content:space-between;
-    align-items:flex-start;
+    align-items:flex-end;
     gap: 12px;
+    flex-wrap: wrap;
+    padding: 6px 2px;
   }
-  .head__right{
-    display:flex;
-    align-items:center;
+
+  h1{ margin:0; font-size: 28px; letter-spacing: -.02em; font-weight: 1000; }
+  .head p{ margin:6px 0 0; font-size: 13px; opacity:.72; }
+  .hright{ display:flex; gap: 10px; align-items:center; flex-wrap:wrap; }
+
+  .chip{
+    display:inline-flex;
     gap: 10px;
-    flex-wrap:wrap;
-    justify-content:flex-end;
-  }
-
-  .h1{
-    margin: 0;
-    font-size: 30px;
-    letter-spacing:-0.03em;
-    font-weight: 1000;
-  }
-  .sub{ margin: 4px 0 0; opacity:.68; }
-
-  .kpi{
+    align-items:baseline;
     padding: 10px 12px;
-    border-radius: 16px;
-    background: rgba(255,255,255,.72);
-    border: 1px solid rgba(15,23,42,.08);
-    box-shadow: 0 16px 60px rgba(15,23,42,.08);
-    min-width: 120px;
-    text-align:right;
-  }
-  .kpi__n{ font-weight: 1000; letter-spacing:-0.02em; }
-  .kpi__t{ font-size: 12px; opacity:.65; margin-top: 2px; }
-
-  .filters{
-    display:grid;
-    grid-template-columns: 1.2fr .8fr auto;
-    gap: 10px;
-    padding: 12px;
-    border-radius: 22px;
-    background: rgba(255,255,255,.72);
-    border: 1px solid rgba(15,23,42,.08);
-    box-shadow: 0 18px 60px rgba(15,23,42,.08);
+    border-radius: 999px;
+    background: var(--glass);
+    border: 1px solid var(--line);
+    box-shadow: 0 18px 50px rgba(15,23,42,.06);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
   }
-  .field{ display:grid; gap: 6px; }
-  .label{ font-size: 12px; opacity:.7; font-weight: 900; }
+  .chip .k{ font-size: 11px; opacity:.65; font-weight: 900; letter-spacing:.02em; }
+  .chip .v{ font-size: 13px; font-weight: 1000; letter-spacing:-.01em; }
+  .chip--ghost{ background: rgba(15,23,42,.05); box-shadow:none; }
+  .chip--primary{ background: rgba(93,124,255,.10); border-color: rgba(93,124,255,.18); color: rgb(41,66,184); }
+  .chip--loading{
+    gap: 8px;
+    background: rgba(93,124,255,.10);
+    border-color: rgba(93,124,255,.18);
+    color: rgb(41,66,184);
+    font-weight: 900;
+  }
+  .dot{
+    width: 8px; height: 8px; border-radius: 999px;
+    background: rgb(93,124,255);
+    box-shadow: 0 0 0 6px rgba(93,124,255,.16);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%,100%{ transform: scale(1); opacity: .9; }
+    50%{ transform: scale(1.1); opacity: 1; }
+  }
 
-  .input{
-    width: 100%;
+  .alert{
+    font-size: 12px;
     padding: 10px 12px;
     border-radius: 14px;
-    border: 1px solid rgba(15,23,42,.10);
-    background: rgba(15,23,42,.04);
-  }
-  .input:focus{
-    outline: none;
-    box-shadow: 0 0 0 4px rgba(93,124,255,.20);
-    border-color: rgba(93,124,255,.45);
+    background: rgba(185,28,28,.10);
+    color: #b91c1c;
+    border: 1px solid rgba(185,28,28,.18);
   }
 
-  .filters__actions{ display:flex; gap: 10px; align-items:end; justify-content:flex-end; }
+  .toolbar{
+    position: sticky;
+    top: 86px;
+    z-index: 4;
+    padding: 6px 2px;
+  }
+
+  .toolbar__inner{
+    display:grid;
+    grid-template-columns: 1.4fr 1fr auto;
+    gap: 12px;
+    padding: 12px;
+    border-radius: 18px;
+    background: rgba(255,255,255,.70);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .filters{
+    display:flex;
+    gap: 10px;
+    align-items:center;
+    min-width: 0;
+  }
+
+  .search{
+    flex: 1;
+    min-width: 220px;
+    position: relative;
+  }
+  .sicon{
+    position:absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 11px;
+    padding: 6px 8px;
+    border-radius: 999px;
+    background: rgba(15,23,42,.06);
+    border: 1px solid rgba(15,23,42,.08);
+    opacity: .85;
+    user-select: none;
+  }
+  .search input{
+    width: 100%;
+    border: 1px solid rgba(15,23,42,.10);
+    background: rgba(15,23,42,.035);
+    padding: 12px 12px 12px 64px;
+    border-radius: 14px;
+    outline: none;
+    font-size: 14px;
+    transition: box-shadow .2s ease, border-color .2s ease, background .2s ease;
+  }
+  .search input:focus{
+    border-color: rgba(93,124,255,.55);
+    box-shadow: 0 0 0 5px rgba(93,124,255,.18);
+    background: rgba(93,124,255,.06);
+  }
+
+  .selectWrap select{
+    border: 1px solid rgba(15,23,42,.10);
+    background: rgba(15,23,42,.035);
+    padding: 12px 12px;
+    border-radius: 14px;
+    outline: none;
+    font-size: 14px;
+  }
+  .selectWrap select:focus{
+    border-color: rgba(93,124,255,.55);
+    box-shadow: 0 0 0 5px rgba(93,124,255,.18);
+    background: rgba(93,124,255,.06);
+  }
+
+  /* ✅ tri */
+  .sortRow{ display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+  .sortWrap{
+    display:flex;
+    gap: 8px;
+    align-items:center;
+    padding: 8px 10px;
+    border-radius: 16px;
+    background: rgba(15,23,42,.05);
+    border: 1px solid rgba(15,23,42,.08);
+  }
+  .sortLabel{ font-size: 11px; opacity:.7; font-weight: 900; }
+  .sortWrap select{
+    border: 1px solid rgba(15,23,42,.10);
+    background: rgba(255,255,255,.65);
+    padding: 9px 10px;
+    border-radius: 12px;
+    outline: none;
+    font-size: 13px;
+  }
+  .btn--tiny{ padding: 9px 10px; border-radius: 12px; line-height: 1; }
+
+  .kpiRow{
+    display:flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items:center;
+    justify-content:flex-start;
+  }
+  .tchip{
+    display:inline-flex;
+    gap: 10px;
+    align-items:baseline;
+    padding: 10px 12px;
+    border-radius: 999px;
+    background: rgba(15,23,42,.05);
+    border: 1px solid rgba(15,23,42,.08);
+    font-weight: 950;
+  }
+  .tk{ font-size: 11px; opacity:.7; font-weight: 900; }
+  .tv{ font-size: 13px; letter-spacing:-.01em; }
+  .tchip--good{ background: rgba(16,185,129,.10); border-color: rgba(16,185,129,.18); color: rgb(4,120,87); }
+  .tchip--bad{ background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.18); color: rgb(185,28,28); }
+  .tchip--ghost{ background: rgba(255,255,255,.65); }
+
+  .actions{
+    display:flex;
+    gap: 10px;
+    align-items:center;
+    justify-content:flex-end;
+    flex-wrap: wrap;
+  }
 
   .btn{
     border: 1px solid rgba(15,23,42,.10);
-    background: rgba(15,23,42,.06);
-    padding: 10px 12px;
+    background: rgba(255,255,255,.70);
+    color: rgba(15,23,42,.92);
     border-radius: 14px;
-    font-weight: 1000;
-    cursor:pointer;
+    padding: 10px 12px;
+    font-weight: 950;
     text-decoration:none;
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    transition: transform .15s cubic-bezier(.2,.8,.2,1), background .2s cubic-bezier(.2,.8,.2,1);
+    cursor:pointer;
+    transition: transform .16s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease;
   }
-  .btn:hover{ background: rgba(15,23,42,.09); transform: translateY(-1px); }
-  .btn:active{ transform: translateY(0) scale(.99); }
-
+  .btn:hover{
+    transform: translateY(-1px);
+    box-shadow: 0 18px 40px rgba(15,23,42,.06);
+    background: rgba(15,23,42,.04);
+  }
   .btn--primary{
-    background: rgba(93,124,255,.16);
+    background: linear-gradient(135deg, rgba(111,139,255,1), rgba(93,124,255,1));
+    color: white;
     border-color: rgba(93,124,255,.22);
-    color: rgba(37,99,235,.95);
+    box-shadow: 0 18px 45px rgba(93,124,255,.22);
   }
-  .btn--primary:hover{ background: rgba(93,124,255,.20); }
-
-  .btn--ghost{ background: rgba(255,255,255,.55); }
+  .btn--primary:hover{
+    background: linear-gradient(135deg, rgba(111,139,255,1), rgba(93,124,255,1));
+    box-shadow: 0 26px 65px rgba(93,124,255,.28);
+  }
+  .btn--ghost{ background: rgba(15,23,42,.05); box-shadow:none; }
   .btn--danger{
     background: rgba(239,68,68,.10);
     border-color: rgba(239,68,68,.18);
-    color: rgba(185,28,28,.95);
+    color: rgb(185,28,28);
   }
-  .btn--danger:hover{ background: rgba(239,68,68,.14); }
+  .btn--danger:hover{
+    background: rgba(239,68,68,.14);
+    box-shadow: 0 18px 40px rgba(239,68,68,.10);
+  }
 
-  .table{
-    border-radius: 22px;
-    overflow:hidden;
-    border: 1px solid rgba(15,23,42,.08);
+  .inline{ margin: 0; }
+
+  .grid{
+    display:grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    align-items: start;
+  }
+
+  .card{
+    border-radius: 20px;
     background: rgba(255,255,255,.72);
-    box-shadow: 0 18px 60px rgba(15,23,42,.08);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    padding: 14px;
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
+    transition: transform .18s ease, box-shadow .2s ease, border-color .2s ease;
   }
-  .thead, .tr{
-    display:grid;
-    grid-template-columns: 1.6fr .7fr .5fr .6fr .5fr;
+  .card:hover{
+    transform: translateY(-2px);
+    border-color: rgba(93,124,255,.18);
+    box-shadow: 0 24px 70px rgba(15,23,42,.08);
+  }
+
+  .card__top{
+    display:flex;
+    justify-content:space-between;
     gap: 10px;
-    padding: 12px 14px;
+    align-items:flex-start;
+  }
+
+  .who{
+    display:flex;
+    gap: 10px;
+    align-items:center;
+    min-width: 0;
+  }
+  .avatar{
+    width: 42px; height: 42px;
+    border-radius: 16px;
+    display:grid; place-items:center;
+    font-weight: 1000;
+    color: white;
+    background: linear-gradient(135deg, rgba(111,139,255,1), rgba(93,124,255,1));
+    box-shadow: 0 16px 40px rgba(93,124,255,.22);
+    flex: 0 0 auto;
+  }
+
+  .meta{ display:grid; gap: 2px; min-width: 0; }
+  .name{
+    font-weight: 1000;
+    letter-spacing:-.01em;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow: ellipsis;
+  }
+  .sub{
+    font-size: 12px;
+    opacity:.72;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow: ellipsis;
+  }
+  .date{ opacity:.85; }
+
+  .pill{
+    font-size: 12px;
+    font-weight: 950;
+    padding: 7px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(15,23,42,.10);
+    background: rgba(15,23,42,.04);
+    white-space: nowrap;
+    display:inline-flex;
+    gap: 6px;
     align-items:center;
   }
-  .thead{
+  .mini{ font-size: 11px; opacity:.75; }
+
+  /* ✅ quick edit */
+  .statusBox{ display:grid; gap: 8px; justify-items:end; }
+  .quick{ margin:0; }
+  .quickSelect{
+    border: 1px solid rgba(15,23,42,.10);
+    background: rgba(255,255,255,.70);
+    padding: 8px 10px;
+    border-radius: 14px;
+    font-weight: 900;
+    font-size: 12px;
+    outline: none;
+  }
+  .quickSelect:focus{
+    border-color: rgba(93,124,255,.55);
+    box-shadow: 0 0 0 5px rgba(93,124,255,.18);
+  }
+
+  .value{
+    margin-top: 12px;
+    padding: 12px;
+    border-radius: 16px;
     background: rgba(15,23,42,.04);
-    font-size: 12px;
-    font-weight: 1000;
-    opacity:.75;
+    border: 1px solid rgba(15,23,42,.06);
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    gap: 10px;
   }
-  .tbody{ display:grid; }
-  .tr{
-    border-top: 1px solid rgba(15,23,42,.06);
-    transition: background .2s cubic-bezier(.2,.8,.2,1);
-  }
-  .tr:hover{ background: rgba(15,23,42,.03); }
+  .vk{ font-size: 12px; opacity:.7; font-weight: 900; }
+  .vv{ font-size: 16px; font-weight: 1000; letter-spacing:-.01em; }
 
-  .cell{ min-width: 0; }
-  .title{
-    font-weight: 1000;
-    letter-spacing:-0.01em;
-    white-space: nowrap;
-    overflow:hidden;
-    text-overflow: ellipsis;
+  .card__actions{
+    margin-top: 12px;
+    display:flex;
+    gap: 10px;
+    justify-content:space-between;
+    align-items:center;
   }
-  .muted{
-    font-size: 12px;
+
+  .empty{
+    padding: 22px;
+    border-radius: 20px;
+    background: rgba(15,23,42,.04);
+    border: 1px solid rgba(15,23,42,.06);
+    text-align:center;
+    display:grid;
+    gap: 8px;
+  }
+  .empty__icon{ font-size: 34px; }
+  .empty h2{ margin: 0; font-size: 18px; font-weight: 1000; }
+  .empty p{ margin: 0; font-size: 12px; opacity:.72; }
+
+  .card--skel{
+    position: relative;
+    overflow:hidden;
+  }
+  .card--skel::before{
+    content:"";
+    position:absolute; inset:0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.65), transparent);
+    transform: translateX(-100%);
+    animation: shimmer 1.1s ease-in-out infinite;
+  }
+  .sk{ height: 12px; border-radius: 999px; background: rgba(15,23,42,.10); }
+  .sk1{ width: 55%; }
+  .sk2{ width: 75%; margin-top: 12px; }
+  .sk3{ width: 35%; margin-top: 12px; height: 22px; border-radius: 14px; }
+  .sk4{ width: 60%; margin-top: 12px; }
+  @keyframes shimmer{ 0%{ transform: translateX(-100%);} 100%{ transform: translateX(100%);} }
+
+  .modal{
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 50;
+  }
+  .modal[data-open="1"]{ pointer-events: auto; }
+
+  .backdrop{
+    position:absolute;
+    inset: 0;
+    background: rgba(15,23,42,.38);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    opacity: 0;
+    transition: opacity .18s ease;
+  }
+  .modal[data-open="1"] .backdrop{ opacity: 1; }
+
+  .dialog{
+    position:absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -46%) scale(.98);
+    width: min(520px, calc(100vw - 24px));
+    border-radius: 22px;
+    background: rgba(255,255,255,.82);
+    border: 1px solid rgba(255,255,255,.65);
+    box-shadow: 0 40px 120px rgba(15,23,42,.22);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    opacity: 0;
+    transition: opacity .20s ease, transform .20s ease;
+  }
+  .modal[data-open="1"] .dialog{
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  .dialog__head{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap: 10px;
+    padding: 16px 16px 0;
+  }
+  .eyebrow{
+    font-size: 11px;
     opacity:.65;
-    margin-top: 2px;
-    white-space: nowrap;
-    overflow:hidden;
-    text-overflow: ellipsis;
+    font-weight: 900;
+    letter-spacing: .10em;
+    text-transform: uppercase;
   }
-  .right{ text-align:right; }
-  .mono{ font-variant-numeric: tabular-nums; }
-
-  .actions{ display:flex; gap: 10px; justify-content:flex-end; align-items:center; }
-  .icon{
+  .dialog h3{
+    margin: 2px 0 0;
+    font-size: 18px;
+    letter-spacing: -.02em;
+    font-weight: 1000;
+  }
+  .x{
     width: 38px; height: 38px;
     border-radius: 14px;
     border: 1px solid rgba(15,23,42,.10);
-    background: rgba(15,23,42,.06);
+    background: rgba(15,23,42,.04);
     cursor:pointer;
-    display:grid;
-    place-items:center;
-    transition: transform .15s cubic-bezier(.2,.8,.2,1), background .2s cubic-bezier(.2,.8,.2,1);
-  }
-  .icon:hover{ background: rgba(15,23,42,.10); transform: translateY(-1px); }
-  .icon:active{ transform: translateY(0) scale(.99); }
-  .icon--danger{
-    background: rgba(239,68,68,.10);
-    border-color: rgba(239,68,68,.18);
-  }
-  .icon--danger:hover{ background: rgba(239,68,68,.14); }
-
-  .empty{
-    padding: 14px;
-    border-top: 1px solid rgba(15,23,42,.06);
-    opacity:.75;
+    font-weight: 1000;
   }
 
-  /* Mobile cards */
-  .cards{ display:none; gap: 10px; }
-  .card{
-    border-radius: 22px;
-    border: 1px solid rgba(15,23,42,.08);
-    background: rgba(255,255,255,.72);
-    box-shadow: 0 18px 60px rgba(15,23,42,.08);
-    padding: 12px;
-  }
-  .card__top{
-    display:flex; justify-content:space-between; align-items:flex-start; gap: 10px;
-  }
-  .card__meta{
-    display:grid; grid-template-columns: 1fr 1fr; gap: 10px;
-    margin-top: 10px;
-  }
-  .m{ padding: 10px; border-radius: 16px; background: rgba(15,23,42,.04); border: 1px solid rgba(15,23,42,.06); }
-  .m__k{ font-size: 12px; opacity:.65; font-weight: 900; }
-  .m__v{ margin-top: 4px; font-weight: 1000; }
+  .form{ padding: 14px 16px 16px; display:grid; gap: 12px; }
+  .field{ display:grid; gap: 6px; }
+  .lab{ font-size: 12px; opacity:.7; font-weight: 900; }
 
-  .card__actions{
-    display:flex; gap: 10px; margin-top: 10px; justify-content:flex-end;
-  }
-
-  /* Dialog */
-  .dlg::backdrop{ background: rgba(15,23,42,.35); backdrop-filter: blur(4px); }
-  .dlg{
-    border: 0;
-    padding: 0;
-    background: transparent;
-  }
-  .dlg__card{
-    width: min(640px, calc(100vw - 24px));
-    border-radius: 22px;
+  .field input, .field select{
+    width: 100%;
     border: 1px solid rgba(15,23,42,.10);
-    background: rgba(255,255,255,.85);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    box-shadow: 0 30px 100px rgba(15,23,42,.18);
-    padding: 14px;
-  }
-  .dlg__head{
-    display:flex; justify-content:space-between; align-items:flex-start; gap: 10px;
-    padding: 6px 4px 12px;
-  }
-  .dlg__title{ font-weight: 1000; letter-spacing:-0.01em; font-size: 16px; }
-  .dlg__sub{ font-size: 12px; opacity:.65; margin-top: 2px; }
-  .x{
-    width: 40px; height: 40px;
+    background: rgba(15,23,42,.035);
+    padding: 12px 12px;
     border-radius: 14px;
-    border: 1px solid rgba(15,23,42,.10);
-    background: rgba(15,23,42,.06);
-    cursor:pointer;
+    outline: none;
+    font-size: 14px;
+    transition: box-shadow .2s ease, border-color .2s ease, background .2s ease;
   }
-  .x:hover{ background: rgba(15,23,42,.10); }
+  .field input:focus, .field select:focus{
+    border-color: rgba(93,124,255,.55);
+    box-shadow: 0 0 0 5px rgba(93,124,255,.18);
+    background: rgba(93,124,255,.06);
+  }
 
-  .dlg__grid{
+  .row2{
     display:grid;
     grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .form__actions{
+    display:flex;
+    justify-content:flex-end;
     gap: 10px;
-    padding: 6px 4px 12px;
-  }
-  .f{ display:grid; gap: 6px; }
-  .f span{ font-size: 12px; opacity:.7; font-weight: 900; }
-
-  .dlg__actions{
-    display:flex; justify-content:flex-end; gap: 10px;
-    padding: 6px 4px 2px;
+    margin-top: 2px;
   }
 
-  /* Errors */
-  .err{
-    padding: 14px;
-    border-radius: 18px;
-    border: 1px solid rgba(239,68,68,.20);
-    background: rgba(239,68,68,.08);
+  .hint{
+    font-size: 12px;
+    opacity:.72;
+    padding-top: 2px;
   }
-  .err--soft{
-    border-color: rgba(245,158,11,.22);
-    background: rgba(245,158,11,.10);
+
+  @media (max-width: 1100px){
+    .toolbar__inner{ grid-template-columns: 1fr; }
+    .actions{ justify-content:flex-start; }
+    .grid{ grid-template-columns: 1fr; }
+    .row2{ grid-template-columns: 1fr; }
+    .toolbar{ position: relative; top: 0; }
+    .statusBox{ justify-items:start; }
   }
-  .err__title{ font-weight: 1000; }
-  .err__text{ opacity:.85; margin-top: 6px; }
 
-  @media (max-width: 980px){
-    .filters{ grid-template-columns: 1fr; }
-    .filters__actions{ justify-content:stretch; }
-    .filters__actions .btn{ flex: 1; }
-
-    .table{ display:none; }
-    .cards{ display:grid; }
-    .dlg__grid{ grid-template-columns: 1fr; }
-    .head{ flex-direction: column; align-items: stretch; }
-    .head__right{ justify-content:space-between; }
+  @media (prefers-reduced-motion: reduce){
+    .dot{ animation: none !important; }
+    .card, .btn, .backdrop, .dialog, .card--skel::before{ transition: none !important; }
+    .card--skel::before{ animation: none !important; }
   }
 </style>

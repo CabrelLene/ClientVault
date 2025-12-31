@@ -7,15 +7,14 @@
 
   let isSignup = $state(false);
 
-  const forgot = () => {
-    // TODO: on ajoutera /auth/reset (avec Supabase resetPasswordForEmail)
-    alert('Fonction "reset password" à ajouter (prochaine étape).');
-  };
+  function forgotPassword() {
+    // redirection vers /auth/reset (page réelle)
+    window.location.href = '/auth/reset';
+  }
 </script>
 
 <main class="page">
   <section class="auth" class:is-signup={isSignup} id="auth">
-
     <!-- REGISTER -->
     <div class="panel panel--form panel--signup">
       <form class="card" method="POST" action="?/signup">
@@ -41,9 +40,7 @@
           <p class="msg msg--err">{form.signupError}</p>
         {/if}
         {#if form?.signupOk}
-          <p class="msg msg--ok">
-            Inscription OK. Selon config, vérifie ton email si demandé.
-          </p>
+          <p class="msg msg--ok">Inscription OK. Selon config, vérifie ton email si demandé.</p>
         {/if}
 
         <p class="muted">or register with social platforms</p>
@@ -75,8 +72,7 @@
           </div>
         </label>
 
-        <!-- ✅ a11y: pas de href="#" -->
-        <button class="link" type="button" on:click={forgot}>
+        <button class="link" type="button" onclick={forgotPassword}>
           Forgot Password?
         </button>
 
@@ -103,7 +99,7 @@
       <div class="overlay__content overlay__content--left">
         <h1>Hello, Welcome!</h1>
         <p class="overlay__hint">Don’t have an account?</p>
-        <button class="btn btn--ghost" type="button" on:click={() => (isSignup = true)}>
+        <button class="btn btn--ghost" type="button" onclick={() => (isSignup = true)}>
           Register
         </button>
       </div>
@@ -111,11 +107,10 @@
       <div class="overlay__content overlay__content--right">
         <h1>Welcome Back!</h1>
         <p class="overlay__hint">Already have an account?</p>
-        <button class="btn btn--ghost" type="button" on:click={() => (isSignup = false)}>
+        <button class="btn btn--ghost" type="button" onclick={() => (isSignup = false)}>
           Login
         </button>
       </div>
     </div>
-
   </section>
 </main>
