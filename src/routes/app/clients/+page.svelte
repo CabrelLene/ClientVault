@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
   import { navigating } from '$app/stores';
+  import { browser } from '$app/environment';
 
   type Status = 'Nouveau' | 'Qualifié' | 'Proposé' | 'Gagné' | 'Perdu';
 
@@ -23,9 +23,10 @@
 
   let { data } = $props<{ data: Data }>();
 
-  // ✅ FIX: navigating est un STORE -> on utilise $navigating
+  // ✅ vrai loading
   const isLoading = $derived($navigating !== null);
 
+  // Toolbar state
   let qVal = $state('');
   let statusVal = $state<'all' | Status>('all');
   let filterForm: HTMLFormElement | null = $state(null);
@@ -89,7 +90,7 @@
     }
   };
 
-  // TRI UI
+  // Tri UI
   type SortBy = 'date' | 'value' | 'status';
   type SortDir = 'asc' | 'desc';
 
@@ -109,7 +110,6 @@
 
     arr.sort((a, b) => {
       let cmp = 0;
-
       if (sortBy === 'value') {
         cmp = (Number(a.value) || 0) - (Number(b.value) || 0);
       } else if (sortBy === 'status') {
@@ -119,7 +119,6 @@
         const tb = Date.parse(b.created_at) || 0;
         cmp = ta - tb;
       }
-
       return sortDir === 'asc' ? cmp : -cmp;
     });
 
@@ -134,7 +133,9 @@
     filterForm?.requestSubmit();
   }
 
-  // Modal state
+  const clientHref = (id: string) => `/app/clients/${id}`;
+
+  // Modal
   type ModalMode = 'create' | 'edit';
   let modalOpen = $state(false);
   let mode = $state<ModalMode>('create');
@@ -143,7 +144,7 @@
   let nameVal = $state('');
   let companyVal = $state('');
   let statusEditVal = $state<Status>('Nouveau');
-  let valueVal = $state('0');
+  let valueVal = $state('');
 
   const modalTitle = $derived(mode === 'edit' ? 'Modifier le client' : 'Ajouter un client');
   const modalAction = $derived(mode === 'edit' ? '?/update' : '?/create');
@@ -155,7 +156,7 @@
     nameVal = '';
     companyVal = '';
     statusEditVal = 'Nouveau';
-    valueVal = '0';
+    valueVal = '';
     modalOpen = true;
   }
 
@@ -165,7 +166,7 @@
     nameVal = c.name ?? '';
     companyVal = c.company ?? '';
     statusEditVal = c.status;
-    valueVal = String(Number(c.value) || 0);
+    valueVal = c.value == null ? '' : String(Number(c.value) || 0);
     modalOpen = true;
   }
 
@@ -197,13 +198,16 @@
 <section class="page">
   <header class="head">
     <div class="hleft">
-      <h1>Clients</h1>
+      <div class="titleRow">
+        <div class="badge">CRM</div>
+        <h1>Clients</h1>
+      </div>
       <p>Recherche, filtre, modifie — et garde ton pipeline sous contrôle.</p>
     </div>
 
     <div class="hright">
       <span class="chip chip--primary">
-        <span class="k">Total pipeline</span>
+        <span class="k">Pipeline ouvert</span>
         <span class="v">{money(pipelineOpen)}</span>
       </span>
 
@@ -213,7 +217,9 @@
       </span>
 
       {#if isLoading}
-        <span class="chip chip--loading"><span class="dot"></span> Mise à jour…</span>
+        <span class="chip chip--loading">
+          <span class="dot"></span> Mise à jour…
+        </span>
       {/if}
     </div>
   </header>
@@ -226,8 +232,27 @@
     <div class="toolbar__inner">
       <form class="filters" method="GET" bind:this={filterForm}>
         <div class="search">
-          <span class="sicon" aria-hidden="true">⌘K</span>
-          <input name="q" type="search" placeholder="Rechercher (nom, entreprise)…" bind:value={qVal} autocomplete="off" />
+          <span class="sicon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" class="svg" aria-hidden="true">
+              <path
+                d="M10 18a8 8 0 1 1 0-16a8 8 0 0 1 0 16Zm10 4l-6-6"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+
+          <input
+            name="q"
+            type="search"
+            placeholder="Rechercher (nom, entreprise)…"
+            bind:value={qVal}
+            autocomplete="off"
+          />
+          <span class="kbd" aria-hidden="true">Ctrl/⌘ K</span>
         </div>
 
         <div class="selectWrap">
@@ -239,7 +264,20 @@
           </select>
         </div>
 
-        <button class="btn btn--ghost" type="submit">Filtrer</button>
+        <button class="btn btn--ghost" type="submit">
+          <span class="ico">
+            <svg viewBox="0 0 24 24" class="svg" aria-hidden="true">
+              <path
+                d="M4 4h16v4H4zM6 12h12v8H6z"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+          Filtrer
+        </button>
       </form>
 
       <div class="sortRow" aria-label="Tri">
@@ -252,7 +290,19 @@
           </select>
 
           <button class="btn btn--ghost btn--tiny" type="button" onclick={toggleDir} aria-label="Inverser l'ordre">
-            {sortDir === 'asc' ? '↑' : '↓'}
+            <span class="ico">
+              <svg viewBox="0 0 24 24" class="svg" aria-hidden="true">
+                <path
+                  d="M7 7l5-5l5 5M12 2v20M17 17l-5 5l-5-5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+            {sortDir === 'asc' ? 'Asc' : 'Desc'}
           </button>
         </div>
 
@@ -277,8 +327,36 @@
       </div>
 
       <div class="actions">
-        <button class="btn btn--primary" type="button" onclick={openCreate}>+ Ajouter</button>
-        <a class="btn btn--ghost" href="/app/clients/export">Export CSV</a>
+        <button class="btn btn--primary" type="button" onclick={openCreate}>
+          <span class="ico">
+            <svg viewBox="0 0 24 24" class="svg" aria-hidden="true">
+              <path
+                d="M12 5v14M5 12h14"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+          </span>
+          Ajouter
+        </button>
+
+        <a class="btn btn--ghost" href="/app/clients/export">
+          <span class="ico">
+            <svg viewBox="0 0 24 24" class="svg" aria-hidden="true">
+              <path
+                d="M12 3v12m0 0l4-4m-4 4l-4-4M4 21h16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+          Export CSV
+        </a>
       </div>
     </div>
   </div>
@@ -299,54 +377,151 @@
       <div class="empty__icon">🗂️</div>
       <h2>Aucun client</h2>
       <p>Commence par créer un client. Ajoute une valeur pour alimenter ton pipeline.</p>
-      <button class="btn btn--primary" type="button" onclick={openCreate}>Créer un client</button>
+      <button class="btn btn--primary" type="button" onclick={openCreate}>
+        <span class="ico">
+          <svg viewBox="0 0 24 24" class="svg" aria-hidden="true">
+            <path
+              d="M12 5v14M5 12h14"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </svg>
+        </span>
+        Créer un client
+      </button>
     </div>
   {:else}
     <div class="grid">
       {#each viewClients as c (c.id)}
         <article class="card">
-          <div class="card__top">
-            <div class="who">
-              <div class="avatar">{c.name?.slice(0, 1)?.toUpperCase() ?? 'C'}</div>
-              <div class="meta">
-                <div class="name" title={c.name}>{c.name}</div>
-                <div class="sub">
-                  {c.company ?? '—'} • <span class="date">{fmtDate(c.created_at)}</span>
+          <!-- contenu visuel -->
+          <div class="card__content">
+            <div class="card__top">
+              <div class="who">
+                <div class="avatar">{c.name?.slice(0, 1)?.toUpperCase() ?? 'C'}</div>
+                <div class="meta">
+                  <div class="name" title={c.name}>{c.name}</div>
+                  <div class="sub">
+                    {c.company ?? '—'} • <span class="date">{fmtDate(c.created_at)}</span>
+                  </div>
                 </div>
+              </div>
+
+              <!-- controls au-dessus du lien -->
+              <div class="statusBox controls">
+                <span
+                  class="pill"
+                  style={`background:${statusMeta(c.status).bg};border-color:${statusMeta(c.status).bd};color:${statusMeta(
+                    c.status
+                  ).tx}`}
+                  title="Statut actuel"
+                >
+                  <span class="dotS" style={`background:${statusMeta(c.status).tx}`}></span>
+                  {c.status}
+                  <span class="mini">({countByStatus[c.status] ?? 0})</span>
+                </span>
+
+                <form method="POST" action="?/quickStatus" class="quick">
+                  <input type="hidden" name="id" value={c.id} />
+                  <select
+                    class="quickSelect"
+                    name="status"
+                    value={c.status}
+                    onchange={(e) => {
+                      e.stopPropagation();
+                      submitQuickStatus(e);
+                    }}
+                    aria-label="Modifier le statut"
+                  >
+                    {#each data.statuses as s (s)}
+                      <option value={s}>{s}</option>
+                    {/each}
+                  </select>
+                </form>
               </div>
             </div>
 
-            <div class="statusBox">
-              <span
-                class="pill"
-                style={`background:${statusMeta(c.status).bg};border-color:${statusMeta(c.status).bd};color:${statusMeta(c.status).tx}`}
-                title="Statut actuel"
-              >
-                {c.status} <span class="mini">({countByStatus[c.status] ?? 0})</span>
-              </span>
-
-              <form method="POST" action="?/quickStatus" class="quick">
-                <input type="hidden" name="id" value={c.id} />
-                <select class="quickSelect" name="status" value={c.status} onchange={submitQuickStatus} aria-label="Modifier le statut">
-                  {#each data.statuses as s (s)}
-                    <option value={s}>{s}</option>
-                  {/each}
-                </select>
-              </form>
+            <div class="value">
+              <div class="vk">Valeur</div>
+              <div class="vv">{money(Number(c.value) || 0)}</div>
             </div>
           </div>
 
-          <div class="value">
-            <div class="vk">Valeur</div>
-            <div class="vv">{money(Number(c.value) || 0)}</div>
-          </div>
+          <!-- ✅ lien “stretched” au-dessus du contenu (clic carte) -->
+          <a class="stretched" href={clientHref(c.id)} aria-label={`Ouvrir ${c.name}`}></a>
 
-          <div class="card__actions">
-            <button class="btn btn--ghost" type="button" onclick={() => openEdit(c)}>Modifier</button>
+          <!-- actions au-dessus du lien -->
+          <div class="card__actions controls">
+            <button
+              class="btn btn--ghost"
+              type="button"
+              onclick={(e) => {
+                e.stopPropagation();
+                openEdit(c);
+              }}
+            >
+              <span class="ico">
+                <svg viewBox="0 0 24 24" class="svg" aria-hidden="true">
+                  <path d="M12 20h9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path
+                    d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1l1-4L16.5 3.5Z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              Modifier
+            </button>
 
-            <form method="POST" action="?/remove" class="inline">
+            <a
+              class="btn btn--ghost"
+              href={clientHref(c.id)}
+              onclick={(e) => e.stopPropagation()}
+              title="Ouvrir la fiche"
+            >
+              <span class="ico">
+                <svg viewBox="0 0 24 24" class="svg" aria-hidden="true">
+                  <path d="M14 3h7v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path d="M10 14L21 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path
+                    d="M21 14v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              Ouvrir
+            </a>
+
+            <form
+              method="POST"
+              action="?/remove"
+              class="inline"
+              onclick={(e) => e.stopPropagation()}
+              onsubmit={(e) => e.stopPropagation()}
+            >
               <input type="hidden" name="id" value={c.id} />
-              <button class="btn btn--danger" type="submit">Supprimer</button>
+              <button class="btn btn--danger" type="submit">
+                <span class="ico">
+                  <svg viewBox="0 0 24 24" class="svg" aria-hidden="true">
+                    <path d="M3 6h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path
+                      d="M8 6V4h8v2m-1 0v14H9V6"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </span>
+                Supprimer
+              </button>
             </form>
           </div>
         </article>
@@ -408,9 +583,7 @@
   </div>
 </section>
 
-
 <style>
-  /* ✅ ton CSS inchangé + mini ajouts pour tri + quick edit */
   :global(:root){
     --primary: rgb(93,124,255);
     --ok: rgb(16,185,129);
@@ -423,7 +596,21 @@
     --shadow: 0 18px 55px rgba(15,23,42,.06);
   }
 
+  .svg{ width: 18px; height: 18px; display:block; }
+
   .page{ display:grid; gap: 14px; }
+  .titleRow{ display:flex; align-items:center; gap: 10px; }
+  .badge{
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(93,124,255,.12);
+    border: 1px solid rgba(93,124,255,.18);
+    color: rgb(41,66,184);
+    font-weight: 950;
+    letter-spacing:.06em;
+    text-transform: uppercase;
+  }
 
   .head{
     display:flex;
@@ -510,7 +697,7 @@
 
   .search{
     flex: 1;
-    min-width: 220px;
+    min-width: 260px;
     position: relative;
   }
   .sicon{
@@ -518,19 +705,33 @@
     left: 10px;
     top: 50%;
     transform: translateY(-50%);
-    font-size: 11px;
-    padding: 6px 8px;
+    padding: 8px;
     border-radius: 999px;
     background: rgba(15,23,42,.06);
     border: 1px solid rgba(15,23,42,.08);
     opacity: .85;
     user-select: none;
+    display:grid;
+    place-items:center;
+  }
+  .kbd{
+    position:absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 11px;
+    padding: 6px 8px;
+    border-radius: 999px;
+    background: rgba(15,23,42,.05);
+    border: 1px solid rgba(15,23,42,.08);
+    opacity:.75;
+    user-select:none;
   }
   .search input{
     width: 100%;
     border: 1px solid rgba(15,23,42,.10);
     background: rgba(15,23,42,.035);
-    padding: 12px 12px 12px 64px;
+    padding: 12px 90px 12px 54px;
     border-radius: 14px;
     outline: none;
     font-size: 14px;
@@ -556,7 +757,6 @@
     background: rgba(93,124,255,.06);
   }
 
-  /* ✅ tri */
   .sortRow{ display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
   .sortWrap{
     display:flex;
@@ -576,7 +776,6 @@
     outline: none;
     font-size: 13px;
   }
-  .btn--tiny{ padding: 9px 10px; border-radius: 12px; line-height: 1; }
 
   .kpiRow{
     display:flex;
@@ -619,6 +818,15 @@
     text-decoration:none;
     cursor:pointer;
     transition: transform .16s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease;
+    display:inline-flex;
+    align-items:center;
+    gap: 10px;
+  }
+  .ico{
+    width: 18px; height: 18px;
+    display:inline-grid;
+    place-items:center;
+    opacity:.9;
   }
   .btn:hover{
     transform: translateY(-1px);
@@ -631,10 +839,7 @@
     border-color: rgba(93,124,255,.22);
     box-shadow: 0 18px 45px rgba(93,124,255,.22);
   }
-  .btn--primary:hover{
-    background: linear-gradient(135deg, rgba(111,139,255,1), rgba(93,124,255,1));
-    box-shadow: 0 26px 65px rgba(93,124,255,.28);
-  }
+  .btn--primary:hover{ box-shadow: 0 26px 65px rgba(93,124,255,.28); }
   .btn--ghost{ background: rgba(15,23,42,.05); box-shadow:none; }
   .btn--danger{
     background: rgba(239,68,68,.10);
@@ -645,6 +850,7 @@
     background: rgba(239,68,68,.14);
     box-shadow: 0 18px 40px rgba(239,68,68,.10);
   }
+  .btn--tiny{ padding: 9px 10px; border-radius: 12px; line-height: 1; }
 
   .inline{ margin: 0; }
 
@@ -656,6 +862,7 @@
   }
 
   .card{
+    position: relative;
     border-radius: 20px;
     background: rgba(255,255,255,.72);
     border: 1px solid var(--line);
@@ -670,6 +877,19 @@
     border-color: rgba(93,124,255,.18);
     box-shadow: 0 24px 70px rgba(15,23,42,.08);
   }
+
+  .card__content{ position: relative; z-index: 1; }
+  .stretched{
+    position:absolute;
+    inset: 0;
+    border-radius: inherit;
+    z-index: 2;
+    outline: none;
+  }
+  .stretched:focus-visible{
+    box-shadow: 0 0 0 5px rgba(93,124,255,.22);
+  }
+  .controls{ position: relative; z-index: 3; }
 
   .card__top{
     display:flex;
@@ -721,12 +941,12 @@
     background: rgba(15,23,42,.04);
     white-space: nowrap;
     display:inline-flex;
-    gap: 6px;
+    gap: 8px;
     align-items:center;
   }
+  .dotS{ width: 8px; height: 8px; border-radius: 999px; }
   .mini{ font-size: 11px; opacity:.75; }
 
-  /* ✅ quick edit */
   .statusBox{ display:grid; gap: 8px; justify-items:end; }
   .quick{ margin:0; }
   .quickSelect{
@@ -763,6 +983,7 @@
     gap: 10px;
     justify-content:space-between;
     align-items:center;
+    flex-wrap: wrap;
   }
 
   .empty{
@@ -778,10 +999,7 @@
   .empty h2{ margin: 0; font-size: 18px; font-weight: 1000; }
   .empty p{ margin: 0; font-size: 12px; opacity:.72; }
 
-  .card--skel{
-    position: relative;
-    overflow:hidden;
-  }
+  .card--skel{ position: relative; overflow:hidden; }
   .card--skel::before{
     content:"";
     position:absolute; inset:0;
@@ -796,12 +1014,7 @@
   .sk4{ width: 60%; margin-top: 12px; }
   @keyframes shimmer{ 0%{ transform: translateX(-100%);} 100%{ transform: translateX(100%);} }
 
-  .modal{
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 50;
-  }
+  .modal{ position: fixed; inset: 0; pointer-events: none; z-index: 50; }
   .modal[data-open="1"]{ pointer-events: auto; }
 
   .backdrop{
@@ -884,11 +1097,7 @@
     background: rgba(93,124,255,.06);
   }
 
-  .row2{
-    display:grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
+  .row2{ display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
   .form__actions{
     display:flex;
@@ -897,11 +1106,7 @@
     margin-top: 2px;
   }
 
-  .hint{
-    font-size: 12px;
-    opacity:.72;
-    padding-top: 2px;
-  }
+  .hint{ font-size: 12px; opacity:.72; padding-top: 2px; }
 
   @media (max-width: 1100px){
     .toolbar__inner{ grid-template-columns: 1fr; }

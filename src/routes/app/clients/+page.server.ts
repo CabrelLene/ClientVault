@@ -1,23 +1,26 @@
 // src/routes/app/clients/+page.server.ts
-import { redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
+import { redirect, fail } from '@sveltejs/kit';
 
 const STATUSES = ['Nouveau', 'Qualifié', 'Proposé', 'Gagné', 'Perdu'] as const;
 type Status = (typeof STATUSES)[number];
 
-function asStatus(v: unknown): Status {
-  const s = String(v ?? '').trim() as Status;
-  return (STATUSES as readonly string[]).includes(s) ? s : 'Nouveau';
-}
+const isStatus = (v: unknown): v is Status => STATUSES.includes(v as Status);
 
-function asNumber(v: unknown): number {
-  // accepte "12 000", "12,000", "12000.50", etc.
-  const raw = String(v ?? '0')
-    .replace(/\s/g, '')
-    .replace(/,/g, '.');
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : 0;
-}
+const toStr = (v: FormDataEntryValue | null) => (typeof v === 'string' ? v.trim() : '');
+const toValue = (v: FormDataEntryValue | null): number | null => {
+  const s = toStr(v);
+  if (!s) return null;
+  const n = Number(String(s).replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+};
+
+const withToast = (url: URL, toastMsg: string, type: 'success' | 'error' | 'info' = 'success') => {
+  const u = new URL(url);
+  u.searchParams.set('toast', toastMsg);
+  u.searchParams.set('type', type);
+  return u.pathname + u.search;
+};
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   const user = await locals.safeGetUser();
@@ -44,9 +47,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     query = query.or(`name.ilike.${like},company.ilike.${like}`);
   }
 
-  if (status !== 'all') {
-    query = query.eq('status', status);
-  }
+  if (status !== 'all') query = query.eq('status', status);
 
   const { data, error } = await query.order('created_at', { ascending: false });
 
@@ -67,19 +68,20 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 };
 
 export const actions: Actions = {
-  create: async ({ locals, request }) => {
+  create: async ({ locals, request, url }) => {
     const user = await locals.safeGetUser();
     if (!user) throw redirect(303, '/auth');
 
-    const fd = await request.formData();
-    const name = String(fd.get('name') ?? '').trim();
-    const company = String(fd.get('company') ?? '').trim() || null;
-    const status = asStatus(fd.get('status'));
-    const value = asNumber(fd.get('value'));
+    const form = await request.formData();
+    const name = toStr(form.get('name'));
+    const company = toStr(form.get('company')) || null;
 
-    if (!name) {
-      throw redirect(303, `/app/clients?toast=${encodeURIComponent('Nom requis')}&type=error`);
-    }
+    const statusRaw = toStr(form.get('status')) || 'Nouveau';
+    const status: Status = isStatus(statusRaw) ? statusRaw : 'Nouveau';
+
+    const value = toValue(form.get('value'));
+
+    if (!name) return fail(400, { message: 'Nom obligatoire' });
 
     const { error } = await locals.supabase.from('clients').insert({
       user_id: user.id,
@@ -89,27 +91,27 @@ export const actions: Actions = {
       value
     });
 
-    if (error) {
-      throw redirect(303, `/app/clients?toast=${encodeURIComponent(error.message)}&type=error`);
-    }
+    if (error) throw redirect(303, withToast(url, `Création échouée: ${error.message}`, 'error'));
 
-    throw redirect(303, `/app/clients?toast=${encodeURIComponent('Client créé ✅')}&type=success`);
+    throw redirect(303, withToast(url, 'Client créé ✅', 'success'));
   },
 
-  update: async ({ locals, request }) => {
+  update: async ({ locals, request, url }) => {
     const user = await locals.safeGetUser();
     if (!user) throw redirect(303, '/auth');
 
-    const fd = await request.formData();
-    const id = String(fd.get('id') ?? '').trim();
-    const name = String(fd.get('name') ?? '').trim();
-    const company = String(fd.get('company') ?? '').trim() || null;
-    const status = asStatus(fd.get('status'));
-    const value = asNumber(fd.get('value'));
+    const form = await request.formData();
+    const id = toStr(form.get('id'));
+    const name = toStr(form.get('name'));
+    const company = toStr(form.get('company')) || null;
 
-    if (!id || !name) {
-      throw redirect(303, `/app/clients?toast=${encodeURIComponent('ID + nom requis')}&type=error`);
-    }
+    const statusRaw = toStr(form.get('status')) || 'Nouveau';
+    const status: Status = isStatus(statusRaw) ? statusRaw : 'Nouveau';
+
+    const value = toValue(form.get('value'));
+
+    if (!id) return fail(400, { message: 'ID manquant' });
+    if (!name) return fail(400, { message: 'Nom obligatoire' });
 
     const { error } = await locals.supabase
       .from('clients')
@@ -117,39 +119,46 @@ export const actions: Actions = {
       .eq('id', id)
       .eq('user_id', user.id);
 
-    if (error) {
-      throw redirect(303, `/app/clients?toast=${encodeURIComponent(error.message)}&type=error`);
-    }
+    if (error) throw redirect(303, withToast(url, `Update échoué: ${error.message}`, 'error'));
 
-    throw redirect(303, `/app/clients?toast=${encodeURIComponent('Client mis à jour ✅')}&type=success`);
+    throw redirect(303, withToast(url, 'Client modifié ✅', 'success'));
   },
 
-  remove: async ({ locals, request }) => {
+  remove: async ({ locals, request, url }) => {
     const user = await locals.safeGetUser();
     if (!user) throw redirect(303, '/auth');
 
-    const fd = await request.formData();
-    const id = String(fd.get('id') ?? '').trim();
-    if (!id) throw redirect(303, `/app/clients?toast=${encodeURIComponent('ID requis')}&type=error`);
+    const form = await request.formData();
+    const id = toStr(form.get('id'));
+    if (!id) return fail(400, { message: 'ID manquant' });
+
+    // Supprimer les tâches liées (évite contraintes FK / RLS)
+    const { error: tErr } = await locals.supabase
+      .from('client_tasks')
+      .delete()
+      .eq('client_id', id)
+      .eq('user_id', user.id);
+
+    if (tErr) throw redirect(303, withToast(url, `Suppression tâches échouée: ${tErr.message}`, 'error'));
 
     const { error } = await locals.supabase.from('clients').delete().eq('id', id).eq('user_id', user.id);
 
-    if (error) {
-      throw redirect(303, `/app/clients?toast=${encodeURIComponent(error.message)}&type=error`);
-    }
+    if (error) throw redirect(303, withToast(url, `Suppression échouée: ${error.message}`, 'error'));
 
-    throw redirect(303, `/app/clients?toast=${encodeURIComponent('Client supprimé ✅')}&type=success`);
+    throw redirect(303, withToast(url, 'Client supprimé 🗑️', 'success'));
   },
 
-  quickStatus: async ({ locals, request }) => {
+  quickStatus: async ({ locals, request, url }) => {
     const user = await locals.safeGetUser();
     if (!user) throw redirect(303, '/auth');
 
-    const fd = await request.formData();
-    const id = String(fd.get('id') ?? '').trim();
-    const status = asStatus(fd.get('status'));
+    const form = await request.formData();
+    const id = toStr(form.get('id'));
+    const statusRaw = toStr(form.get('status'));
 
-    if (!id) throw redirect(303, `/app/clients?toast=${encodeURIComponent('ID requis')}&type=error`);
+    if (!id) return fail(400, { message: 'ID manquant' });
+
+    const status: Status = isStatus(statusRaw) ? statusRaw : 'Nouveau';
 
     const { error } = await locals.supabase
       .from('clients')
@@ -157,10 +166,8 @@ export const actions: Actions = {
       .eq('id', id)
       .eq('user_id', user.id);
 
-    if (error) {
-      throw redirect(303, `/app/clients?toast=${encodeURIComponent(error.message)}&type=error`);
-    }
+    if (error) throw redirect(303, withToast(url, `Statut échoué: ${error.message}`, 'error'));
 
-    throw redirect(303, `/app/clients?toast=${encodeURIComponent('Statut mis à jour ✅')}&type=success`);
+    throw redirect(303, withToast(url, 'Statut mis à jour ✅', 'success'));
   }
 };

@@ -298,7 +298,8 @@
       {:else}
         <div class="list">
           {#each data.topClients as d (d.id)}
-            <a class="row" href="/app/clients" title="Gérer dans Clients">
+            <a class="row" href={`/app/clients/${d.id}`} title="Ouvrir la fiche client">
+
               <div class="left">
                 <div class="avatar">{d.name?.slice(0, 1)?.toUpperCase() ?? 'C'}</div>
                 <div class="meta">
