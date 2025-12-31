@@ -93,7 +93,10 @@
 
       <div class="actions">
         <a class="ghost" href="/app/clients">+ Ajouter un client</a>
-        <a class="ghost" href="/app/clients/export">Export CSV</a>
+       <a class="ghost" href="/app/clients/export" data-sveltekit-reload>
+  Export CSV
+</a>
+
       </div>
     </header>
 

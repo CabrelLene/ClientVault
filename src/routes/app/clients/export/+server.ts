@@ -29,7 +29,6 @@ function torontoTodayISO(): string {
 
 function csvEscape(v: unknown): string {
   const s = String(v ?? '');
-  // CSV standard: si virgule, guillemet, ou newline => wrap "..." et double les "
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
@@ -44,22 +43,19 @@ function toCSV(rows: ClientRow[]): string {
         csvEscape(r.name),
         csvEscape(r.company ?? ''),
         csvEscape(r.status),
-        csvEscape(Number(r.value) || 0),
+        csvEscape(r.value ?? ''),
         csvEscape(r.created_at)
       ].join(',')
     )
   ];
-  // BOM UTF-8 pour Excel (sinon accents parfois cassés)
-  return '\uFEFF' + lines.join('\n');
+  return '\uFEFF' + lines.join('\n'); // BOM pour Excel
 }
 
 async function exportClientsCSV(locals: App.Locals): Promise<Response> {
-  // ✅ Auth server-side
   const { data, error } = await locals.supabase.auth.getUser();
   if (error || !data.user) throw redirect(303, '/auth');
   const user = data.user;
 
-  // ✅ Fetch clients du user
   const { data: rows, error: qErr } = await locals.supabase
     .from('clients')
     .select('id,name,company,status,value,created_at')
@@ -67,7 +63,6 @@ async function exportClientsCSV(locals: App.Locals): Promise<Response> {
     .order('created_at', { ascending: false });
 
   if (qErr) {
-    // on redirige proprement avec toast, mais en "throw"
     throw redirect(
       303,
       `/app/clients?toast=${encodeURIComponent('Export CSV échoué: ' + qErr.message)}&type=error`
@@ -80,16 +75,10 @@ async function exportClientsCSV(locals: App.Locals): Promise<Response> {
   return new Response(csv, {
     headers: {
       'content-type': 'text/csv; charset=utf-8',
-      'content-disposition': `attachment; filename="${filename}"`
+      'content-disposition': `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      'cache-control': 'no-store, max-age=0'
     }
   });
 }
 
-// ✅ IMPORTANT: on RETURN une Response (pas void)
-export const GET: RequestHandler = async ({ locals }) => {
-  return exportClientsCSV(locals);
-};
-
-export const POST: RequestHandler = async ({ locals }) => {
-  return exportClientsCSV(locals);
-};
+export const GET: RequestHandler = async ({ locals }) => exportClientsCSV(locals);
